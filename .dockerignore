@@ -1,0 +1,15 @@
+# Build context is the repo root; only backend/studio, backend/requirements.txt and peakcut-ui are copied.
+frontend
+assets
+.git
+.claude
+docs
+**/.env
+**/secrets
+backend/data
+backend/.venv
+backend/tests
+**/__pycache__
+**/node_modules
+*.bat
+**/*.md
