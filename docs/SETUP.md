@@ -9,8 +9,16 @@
 > checkout links (`frontend/src/pages/Pricing.jsx`, [POLAR.md](POLAR.md)), the AWS server (`56.228.122.243`,
 > `backend/deploy/push_aws.sh`) and the `clipheist.site` domain. Sections below that mention those describe the old setup.
 > The site is deployed on Vercel (project `clipheist`, root `frontend`) at https://clipheist-beta.vercel.app; that
-> address is the Supabase Site URL and an allowed origin on the Google client. `VITE_APP_URL` is not set there yet
-> (no backend deployed), so "Start clipping" on the live site still points at the old `app.clipheist.site`.
+> address is the Supabase Site URL and an allowed origin on the Google client. `VITE_APP_URL` there points at the app.
+> The app (backend) runs on the new owner's AWS account since 2026-11-25: EC2 `clipheist-app`, `m7i-flex.large`,
+> Ubuntu 24.04, Sydney (`ap-southeast-2`, the only region the AWS free plan allows this account), Elastic IP
+> `16.179.102.203`, address https://app.16-179-102-203.sslip.io (a free name that points at that IP, until there is
+> a domain). SSH: `ssh -i ~/.ssh/clipheist_aws ubuntu@16.179.102.203` (port 22 is open only to the owner's IP: change
+> the rule in security group `clipheist-app` when that IP changes). App folder `~/clipheist/backend`, settings in
+> its `.env`. Update: `cd ~/clipheist && git pull && cd backend && sudo docker compose up -d --build`.
+> First admin: sign in once, then `sudo docker compose exec app python -m studio.admin grant <your email>`.
+> With a real domain: point it at the IP, set `PEAKCUT_DOMAIN` in the server's `.env`, `VITE_APP_URL` in Vercel, and
+> add `https://<domain>/auth/google/callback` to the Google client's redirect URIs.
 > Local run: `VITE_APP_URL` (frontend) and `CLIPHEIST_SITE` (backend) point the site and the app at each other.
 
 | Piece | Where | Address |
