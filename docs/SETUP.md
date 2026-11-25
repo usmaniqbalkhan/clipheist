@@ -1,9 +1,9 @@
 # ClipHeist setup: where everything lives
 
 > **Moved to a new owner (2026-11-25).** Now on the new owner's accounts: the GitHub repo, Supabase project
-> `vmgfguzhemvstncfiute`, Google Cloud project `clipheist-7c37e7` (OAuth client "ClipHeist Web", still in *Testing*:
-> only the listed test users can sign in until a home page and privacy policy link are set on the Branding page and
-> the app is published), the Modal speech and render workers (workspace `usman8pakistan`, apps `clipheist-asr` and
+> `vmgfguzhemvstncfiute`, Google Cloud project `clipheist-7c37e7` (OAuth client "ClipHeist Web"; published, *In production*, since
+> 2026-11-25 with home page https://clipheist-beta.vercel.app and privacy policy `/privacy` on the same site, so any
+> Google account can sign in; no logo and only the name/email/profile scopes, so no Google verification is needed), the Modal speech and render workers (workspace `usman8pakistan`, apps `clipheist-asr` and
 > `clipheist-render`, shared secret `clipheist-asr`), Cloudflare R2 and the DeepSeek key.
 > Still the previous owner's, to replace before taking payments or going live on a domain: the Polar org and
 > checkout links (`frontend/src/pages/Pricing.jsx`, [POLAR.md](POLAR.md)), the AWS server (`56.228.122.243`,
