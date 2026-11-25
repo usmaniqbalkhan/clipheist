@@ -8,6 +8,9 @@
 > Still the previous owner's, to replace before taking payments or going live on a domain: the Polar org and
 > checkout links (`frontend/src/pages/Pricing.jsx`, [POLAR.md](POLAR.md)), the AWS server (`56.228.122.243`,
 > `backend/deploy/push_aws.sh`) and the `clipheist.site` domain. Sections below that mention those describe the old setup.
+> The site is deployed on Vercel (project `clipheist`, root `frontend`) at https://clipheist-beta.vercel.app; that
+> address is the Supabase Site URL and an allowed origin on the Google client. `VITE_APP_URL` is not set there yet
+> (no backend deployed), so "Start clipping" on the live site still points at the old `app.clipheist.site`.
 > Local run: `VITE_APP_URL` (frontend) and `CLIPHEIST_SITE` (backend) point the site and the app at each other.
 
 | Piece | Where | Address |
