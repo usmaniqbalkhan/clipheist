@@ -1,10 +1,13 @@
 # ClipHeist setup: where everything lives
 
-> **Moving to a new owner (2026-11-25).** Supabase is now project `vmgfguzhemvstncfiute` and the code lives in a new
-> GitHub repo. Everything else below still describes the previous owner's accounts and has to be replaced before
-> going live: the Google OAuth client (`48829640373-…`), the Polar org and checkout links (`frontend/src/pages/Pricing.jsx`,
-> [POLAR.md](POLAR.md)), the AWS server (`56.228.122.243`, `backend/deploy/push_aws.sh`), Cloudflare R2, the Modal
-> speech/render workers and the DeepSeek key (all in `backend/.env`), and the `clipheist.site` domain.
+> **Moved to a new owner (2026-11-25).** Now on the new owner's accounts: the GitHub repo, Supabase project
+> `vmgfguzhemvstncfiute`, Google Cloud project `clipheist-7c37e7` (OAuth client "ClipHeist Web", still in *Testing*:
+> only the listed test users can sign in until a home page and privacy policy link are set on the Branding page and
+> the app is published), the Modal speech and render workers (workspace `usman8pakistan`, apps `clipheist-asr` and
+> `clipheist-render`, shared secret `clipheist-asr`), Cloudflare R2 and the DeepSeek key.
+> Still the previous owner's, to replace before taking payments or going live on a domain: the Polar org and
+> checkout links (`frontend/src/pages/Pricing.jsx`, [POLAR.md](POLAR.md)), the AWS server (`56.228.122.243`,
+> `backend/deploy/push_aws.sh`) and the `clipheist.site` domain. Sections below that mention those describe the old setup.
 > Local run: `VITE_APP_URL` (frontend) and `CLIPHEIST_SITE` (backend) point the site and the app at each other.
 
 | Piece | Where | Address |
@@ -13,7 +16,7 @@
 | Clipping app (PeakCut) + its Postgres + Caddy HTTPS | AWS EC2 `clipheist-app`, eu-north-1, m7i-flex.large | https://app.clipheist.site (Elastic IP 56.228.122.243) |
 | Users, plans, clip credits, orders, waitlist | Supabase project `vmgfguzhemvstncfiute` | https://vmgfguzhemvstncfiute.supabase.co |
 | Payments | Polar org `clip-heist` (production) | IDs in [POLAR.md](POLAR.md) |
-| Google sign-in | Google Cloud OAuth client `48829640373-f3t2k3cd…` | used by Supabase (website) and PeakCut (app) |
+| Google sign-in | Google Cloud project `clipheist-7c37e7`, OAuth client `868646014670-qjop4uus…` (ClipHeist Web) | used by Supabase (website) and PeakCut (app) |
 
 ## How a sale flows
 
@@ -33,7 +36,7 @@
 |---|---|---|
 | `VITE_SUPABASE_URL` | `https://vmgfguzhemvstncfiute.supabase.co` | no (public) |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_-8Xd7gJdDOF5eLVoyp7o-Q_jexgEBoW` | no (public) |
-| `VITE_GOOGLE_CLIENT_ID` | `48829640373-f3t2k3cdlafto9jpadlji3ke39bfgs46.apps.googleusercontent.com` | no (public) |
+| `VITE_GOOGLE_CLIENT_ID` | `868646014670-qjop4uusb5j5sl8mv322d2eo7jjpjt02.apps.googleusercontent.com` | no (public) |
 | `VITE_APP_URL` | address of the deployed backend, e.g. `https://app.your-domain.com` (unset: `https://app.clipheist.site`) | no (public) |
 | `SUPABASE_URL` | `https://vmgfguzhemvstncfiute.supabase.co` | no |
 | `SUPABASE_SECRET_KEY` | copy from `backend/.env` | **yes** |

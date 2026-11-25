@@ -17,8 +17,8 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg", "ca-certificates", "curl", "unzip")
     .run_commands("curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y")
-    .pip_install("numpy==2.2.6", "fastapi==0.162.5", "uvicorn==0.54.0", "soundfile==0.14.0", "httpx==0.28.1",
-                 "yt-dlp==2026.10.21", "pillow==11.3.0")
+    .pip_install("numpy==2.4.6", "fastapi==0.165.0", "uvicorn==0.54.0", "soundfile==0.14.0", "httpx==0.28.1",
+                 "yt-dlp==2026.11.23", "pillow==13.0.0")
     .env({"PEAKCUT_DATA": "/data"})
     .add_local_dir(HERE / "studio", "/root/studio", copy=True, ignore=["__pycache__", "*.pyc"])
 )
