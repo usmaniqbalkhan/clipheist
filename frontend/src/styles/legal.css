@@ -1,0 +1,10 @@
+/* Legal pages (privacy). Uses the landing tokens (landing.css); a plain, readable column of text. */
+.legal{ max-width:760px; margin:24px auto 0; }
+.legal h1{ font-size:var(--h1); margin:12px 0 8px; }
+.legal h2{ font-family:var(--font-heading); font-size:26px; line-height:1.2; margin:40px 0 12px; }
+.legal p, .legal li{ font-size:var(--text-m, 16px); line-height:1.6; color:#141414; }
+.legal p{ margin:0 0 14px; }
+.legal ul{ margin:0 0 14px; padding-left:20px; }
+.legal li{ margin:0 0 8px; }
+.legal a{ color:inherit; text-decoration:underline; text-underline-offset:3px; }
+.legal-date{ font-size:var(--text-s); color:#555; }

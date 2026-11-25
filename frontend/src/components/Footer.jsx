@@ -77,9 +77,9 @@ export default function Footer({ base = '' }) {
                   </div>
                   <div className="footer-block">
                     <div className="title-small">Legal</div>
-                    <div className="nav-link-wrapper"><a href="#" className="footer-link">Privacy</a><div className="nav-line"></div></div>
-                    <div className="nav-link-wrapper"><a href="#" className="footer-link">Terms</a><div className="nav-line"></div></div>
-                    <div className="nav-link-wrapper"><a href="#" className="footer-link">Contact</a><div className="nav-line"></div></div>
+                    <div className="nav-link-wrapper"><Link to="/privacy" className="footer-link">Privacy</Link><div className="nav-line"></div></div>
+                    <div className="nav-link-wrapper"><a href={`${APP_HOME}/terms`} className="footer-link">Terms</a><div className="nav-line"></div></div>
+                    <div className="nav-link-wrapper"><a href="mailto:contactusmaniqbal@gmail.com" className="footer-link">Contact</a><div className="nav-line"></div></div>
                   </div>
                 </div>
                 <div className="social-media-holder">
