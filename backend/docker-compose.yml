@@ -57,7 +57,7 @@ services:
   # change, and then only while nothing is recording:  docker compose up -d --force-recreate recorder
   recorder:
     profiles: ["recorder"]
-    image: peakcut-app:latest
+    image: clipheist-app:latest
     depends_on: [app]
     restart: unless-stopped
     env_file: .env
