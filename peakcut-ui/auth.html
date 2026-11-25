@@ -44,7 +44,7 @@ body{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,
 .main{background:#fff;margin:8px 8px 8px 0;border-radius:var(--r-lg);display:grid;place-items:center;padding:32px 20px}
 .card{width:100%;max-width:400px}
 .card h2{font-size:28px;font-weight:700;letter-spacing:-.03em;color:var(--ink)}
-.card>p{color:var(--dim);margin:8px 0 26px}
+#formside>#p{color:var(--dim);margin:8px 0 26px}
 form{display:flex;flex-direction:column;gap:16px}
 label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:600;color:var(--dim)}
 input{height:46px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:#fff;font:inherit;color:var(--text);outline:none;transition:border-color .15s ease,background-color .15s ease}
@@ -56,6 +56,16 @@ input::placeholder{color:var(--faint)}
 .or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
 .err{display:none;background:var(--bad-soft);color:var(--bad);padding:11px 14px;border-radius:var(--r);font-size:14px;font-weight:500}
 .err.on{display:block}
+.note{background:#E6F5F0;color:#11705F;padding:11px 14px;border-radius:var(--r);font-size:14px;font-weight:500;margin-bottom:14px}
+.check{display:none;text-align:center}
+.check.on{display:block}
+.check .ico{width:56px;height:56px;border-radius:16px;margin:0 auto 16px;background:var(--brand-soft, #FFF1E6);color:var(--deep);display:grid;place-items:center}
+.check .ico svg{width:28px;height:28px;fill:currentColor}
+.check h2{margin:0 0 8px}
+.check p{color:var(--dim);line-height:1.6;margin:0 0 6px}
+.check b{color:var(--text)}
+.check .small{font-size:13px;color:var(--faint);margin-top:14px}
+.check a{color:var(--deep);font-weight:600;text-decoration:none}
 .swap{margin-top:22px;text-align:center;color:var(--dim);font-size:15px}
 .swap a{color:var(--deep);font-weight:600;text-decoration:none}.swap a:hover{text-decoration:underline}
 .hint{font-size:13px;color:var(--faint);font-weight:400}
@@ -89,6 +99,14 @@ input::placeholder{color:var(--faint)}
 </aside>
 <main class="main"><div class="card">
   <a href="/"><img class="mobile-logo" src="/brand/logo.svg" alt="ClipHeist"></a>
+  <div class="check" id="check" role="status">
+    <div class="ico"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M224,48H32a8,8,0,0,0-8,8V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A8,8,0,0,0,224,48Zm-96,85.15L52.57,64H203.43ZM98.71,128,40,181.81V74.19Zm11.84,10.85,12,11.05a8,8,0,0,0,10.82,0l12-11.05,58,53.15H52.57ZM157.29,128,216,74.18V181.82Z"/></svg></div>
+    <h2>Confirm your email</h2>
+    <p>We sent a link to <b id="ckmail">your email</b>.</p>
+    <p>Open it and press the link, then come back here and sign in.</p>
+    <p class="small">Nothing there? Check spam or promotions. Signing in again sends a new link. · <a href="/login" id="ckback">Back to sign in</a></p>
+  </div>
+  <div id="formside">
   <h2 id="h"></h2><p id="p"></p>
   <a class="btn" id="google" href="/auth/google/start" hidden>
     <svg class="g" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.2C12.4 13.7 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.2 5.5-4.7 7.2l7.6 5.9c4.4-4.1 7-10.1 7-17.6z"/><path fill="#FBBC05" d="M10.5 28.6A14.5 14.5 0 0 1 9.7 24c0-1.6.3-3.2.8-4.6l-7.9-6.2A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.3 0-11.6-4.2-13.5-9.9l-7.9 6.2C6.5 42.6 14.6 48 24 48z"/></svg>
@@ -103,6 +121,7 @@ input::placeholder{color:var(--faint)}
   </form>
   <p class="legal" id="legal">By continuing you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</p>
   <p class="swap" id="swap"></p>
+  </div>
 </div></main>
 <script>
 document.getElementById("year").textContent = new Date().getFullYear();
@@ -127,7 +146,12 @@ $("pwshow").addEventListener("click", () => {
 $("swap").innerHTML = up ? 'Already have an account? <a href="/login">Sign in</a>' : 'New to ClipHeist? <a href="/signup">Create an account</a>';
 $("google").href = "/auth/google/start?next=" + encodeURIComponent(dest);
 const fail = m => { $("err").textContent = m; $("err").classList.add("on"); };
-if (new URLSearchParams(location.search).get("error") === "google") fail("Google sign-in didn't finish. Try again, or use your email.");
+const qs = new URLSearchParams(location.search);
+if (qs.get("error") === "google") fail("Google sign-in didn't finish. Try again, or use your email.");
+if (qs.get("verify_error")) fail(qs.get("verify_error"));
+if (qs.get("confirm")) fail("Confirm your email first. Sign in and we'll send you a new link.");
+if (qs.get("verified")) { const n = document.createElement("div"); n.className = "note"; n.textContent = "Email confirmed. Sign in to start clipping."; $("f").prepend(n); }
+const checkEmail = mail => { $("ckmail").textContent = mail || "your email"; $("formside").hidden = true; $("check").classList.add("on"); $("h").hidden = $("p").hidden = true; };
 fetch("/api/public").then(r => r.json()).then(p => {
   if (p.google) { $("google").hidden = false; $("or").hidden = false; }
 }).catch(() => {});
@@ -140,6 +164,7 @@ $("f").addEventListener("submit", async e => {
     const r = await fetch(up ? "/api/auth/signup" : "/api/auth/login", {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({email, password, name:$("name").value.trim()})});
     const d = await r.json().catch(() => ({}));
+    if (d.confirm) { checkEmail(d.email || email); return; }
     if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Something went wrong. Try again.");
     location.href = dest;
   } catch (err) { fail(err.message); $("go").disabled = false; }

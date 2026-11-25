@@ -29,7 +29,7 @@ From a tour of the running app on 2026-11-16. ✅ keep · 🙈 hide for now (cod
 | Score badge on each clip | ✅ | Helps users pick |
 | Cover image per clip | ✅ | Already made |
 | Hindi / Urdu Roman captions, translate to English | 🙈 | Harmless, not our audience |
-| Live recording + live clipping | 🙈 | Runs CPU for the whole stream. Possible premium later |
+| Live recording + live clipping | ✅ (since 2026-11-25) | Paste a link that is live and it is recorded and clipped as it happens; also from Streamers → Start recording. Every live clip comes off the clip balance, and the recording stops when the balance is used up |
 
 ### Posting
 | Feature | Verdict | Why |
@@ -69,3 +69,17 @@ From a tour of the running app on 2026-11-16. ✅ keep · 🙈 hide for now (cod
 | 🆕 Batch links | Premium |
 | 🆕 Frame check to drop menu / loading-screen clips | One test clip was an inventory menu |
 | 🆕 ClipHeist branding | Logo, colours, emails, page titles |
+
+## Upstream PeakCut merged on 2026-11-25
+
+ClipHeist was forked from PeakCut at commit `44b7c62` (2026-11-15). On 2026-11-25 everything upstream had added
+since (50 commits, up to `52591d9` "The big update") was merged in: Streamers (who is live now, record and clip
+24/7), templates/styles, campaigns, the posting schedule, "Clip anyway", cancelling a video, YouTube cookies and
+routes for servers YouTube refuses, Arabic and other speech models, facecam layouts, ad and static-screen skipping,
+a recorder that survives restarts, storage settings, and many fixes. ClipHeist's own parts were kept on top:
+one sign-in through the website, clip credits and the free-plan watermark, Modal rendering and speech, "same link,
+made once", the step-by-step progress, DeepSeek, and the zoomed-in look as the default template (`b-zoom`).
+Still hidden as before: Instagram/TikTok cards, the "new version" bar, the "add your AI key" bar.
+Upstream's own guides are kept as `docs/PEAKCUT_README.md`, `docs/PEAKCUT_AGENTS.md` and `docs/GAMING.md`.
+To merge upstream again later: `git remote add upstream https://github.com/haziqahmedqasmi/PeakCut.git`, fetch, and
+merge by hand (the folders differ: `studio` is `backend/studio`, `web` is `peakcut-ui`, `tests` is `backend/tests`).

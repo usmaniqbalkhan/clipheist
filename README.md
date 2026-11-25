@@ -2,6 +2,7 @@
 
 Paste a GTA 6 stream link, get ready-to-post vertical clips with captions, hooks, titles and hashtags.
 clipheist.site · built on [PeakCut](https://github.com/haziqahmedqasmi/PeakCut) (MIT, see `LICENSE`).
+Forked at PeakCut `44b7c62`; upstream merged up to `52591d9` on 2026-11-25 (see `docs/FEATURES.md`).
 
 ## Layout
 

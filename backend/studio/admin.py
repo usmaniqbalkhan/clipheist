@@ -35,14 +35,14 @@ def _log(c, admin_id: str, action: str, target_id: str = None, detail: str = "")
 
 # ---------------------------------------------------------------- the dashboard
 def overview() -> dict:
-    from . import ai, auth, jobs, live, load, mailer, transcribe
+    from . import ai, auth, fetch_model, jobs, live, load, mailer, transcribe
     now = time.time()
     midnight = time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
     d7, d30 = now - 7 * 86400, now - 30 * 86400
     u, g = db.users.c, db.usage.c
     tok = g.tokens_in + g.tokens_out
     with db.engine.connect() as c:
-        rows = c.execute(sa.select(db.users).order_by(u.created_at.desc()).limit(2000)).all()
+        rows = c.execute(sa.select(db.users).order_by(u.created_at.desc())).all()
         n_users = c.execute(sa.select(sa.func.count()).select_from(db.users)).scalar()
         verified = {r[0] for r in c.execute(sa.select(db.email_ok.c.user_id))}
         used = {r[0]: (r[1], int(r[2] or 0)) for r in c.execute(sa.select(g.user_id, sa.func.count(), sa.func.sum(tok)).group_by(g.user_id))}
@@ -53,10 +53,14 @@ def overview() -> dict:
         for (created,) in c.execute(sa.select(u.created_at).where(u.created_at >= now - 31 * 86400)):
             if _day(created) in daily:
                 daily[_day(created)]["signups"] += 1
-        for r in c.execute(sa.select(g.t, g.tokens_in, g.tokens_out).where(g.t >= now - 31 * 86400)):
-            if _day(r[0]) in daily:
-                x = daily[_day(r[0])]
-                x["tokens"] += int(r[1]) + int(r[2]); x["calls"] += 1          # noqa: E702
+        # one grouped query, not every call of the month pulled into Python: each day is a [start, next start) window
+        starts = [time.mktime(time.strptime(d, "%Y-%m-%d")) for d in days]
+        windows = [(sa.and_(g.t >= s, g.t < e) if e else g.t >= s, d) for s, e, d in zip(starts, starts[1:] + [None], days)]
+        day_of = sa.case(*windows, else_="")
+        for d, n_calls, n_tok in c.execute(sa.select(day_of, sa.func.count(), sa.func.sum(tok)).where(g.t >= starts[0])
+                                           .group_by(sa.literal_column("1"))):
+            if d in daily:
+                daily[d]["tokens"] += int(n_tok or 0); daily[d]["calls"] += int(n_calls)          # noqa: E702
         by_purpose = [[r[0], r[1], int(r[2] or 0)] for r in c.execute(
             sa.select(g.purpose, sa.func.count(), sa.func.sum(tok)).group_by(g.purpose).order_by(sa.func.sum(tok).desc()).limit(12))]
         emails = {r.id: r.email for r in rows}
@@ -64,16 +68,23 @@ def overview() -> dict:
                 "detail": r.detail} for r in c.execute(sa.select(db.admin_log).order_by(db.admin_log.c.t.desc()).limit(40))]
 
     all_jobs = jobs.all_jobs()
+    on_air = live.active()
+    now_box = {"videos_running": sum(1 for j in all_jobs if j["status"] == "running"),
+               "videos_waiting": sum(1 for j in all_jobs if j["status"] == "queued"),
+               "clips_making": sum(1 for j in all_jobs for k in j.get("clips", []) if k.get("status") in ("queued", "rendering")),
+               "live": len(on_air), "live_people": len({(s.job or {}).get("user") for s in on_air}),
+               "live_per_user": config.MAX_LIVE_PER_USER, "live_total": config.MAX_LIVE_TOTAL}
     vids, clips = defaultdict(int), defaultdict(int)
     for j in all_jobs:
         vids[j["user"]] += 1
         clips[j["user"]] += sum(1 for k in j["clips"] if k.get("status") == "done")
     verify_on = config.VERIFY_EMAIL
-    users = [{"id": r.id, "email": r.email, "name": r.name, "role": "admin" if r.is_admin else "user", "disabled": bool(r.disabled),
+    users = _rows_cache["users"] = [{"id": r.id, "email": r.email, "name": r.name, "role": "admin" if r.is_admin else "user", "disabled": bool(r.disabled),
               "verified": (not verify_on) or r.id in verified, "google": bool(r.google_sub),
               "created_at": r.created_at, "last_seen": r.last_seen,
               "ai_calls": used.get(r.id, (0, 0))[0], "tokens": used.get(r.id, (0, 0))[1],
               "videos": vids[r.id], "clips": clips[r.id]} for r in rows]
+    _rows_cache["t"] = time.time()
     return {
         "totals": {"users": int(n_users), "verified": sum(1 for x in users if x["verified"]),
                    "disabled": sum(1 for x in users if x["disabled"]), "admins": sum(1 for x in users if x["role"] == "admin"),
@@ -85,12 +96,38 @@ def overview() -> dict:
                    "tokens": sum(v[1] for v in used.values()),
                    "videos": len(all_jobs), "clips": sum(clips.values()), "recording": len(live.active()),
                    "working": sum(1 for j in all_jobs if j["status"] in ("queued", "running"))},
-        "daily": list(daily.values()), "by_purpose": by_purpose, "users": users, "log": log,
-        "server": {"speech_model": transcribe.model_ready(), "ai_key": ai.ready(), "ai_provider": ai.label(),
+        "daily": list(daily.values()), "by_purpose": by_purpose, "log": log, "now": now_box,
+        "server": {"speech_model": transcribe.model_ready(),
+                   "speech_more": {m[0]: fetch_model.ready(k) for k, m in fetch_model.MODELS.items() if k != fetch_model.DEFAULT},
+                   "ai_key": ai.ready(), "ai_provider": ai.label(),
                    "ai_model": (ai.models() or [""])[0], "google": auth.google_ready(), "mail": mailer.ready(),
                    "free_gb": round(shutil.disk_usage(config.DATA_DIR).free / 1e9, 1),
                    "load": load.state(), "running": jobs.running_now(), "waiting": jobs.waiting_total(),
                    "database": config.DATABASE_URL.split(":", 1)[0].split("+")[0]}}
+
+
+_rows_cache = {"t": 0.0, "users": []}
+PER_PAGE = 50
+SORTS = ("created_at", "last_seen", "tokens", "ai_calls", "videos", "clips")
+
+
+def user_list(q: str = "", show: str = "all", sort: str = "created_at", page: int = 1) -> dict:
+    """One page of accounts, searched and filtered across every account (not only the ones on screen).
+    The numbers behind it are worked out at most every 20 seconds."""
+    if time.time() - _rows_cache["t"] > 20:
+        overview()
+    rows = _rows_cache["users"]
+    q = (q or "").strip().lower()[:100]
+    if q:
+        rows = [x for x in rows if q in x["email"].lower() or q in (x["name"] or "").lower() or q == x["id"].lower()]
+    rows = {"disabled": [x for x in rows if x["disabled"]],
+            "admins": [x for x in rows if x["role"] == "admin"]}.get(show, rows)
+    sort = sort if sort in SORTS else "created_at"
+    rows = sorted(rows, key=lambda x: x[sort] or 0, reverse=True)
+    pages = max(1, -(-len(rows) // PER_PAGE))
+    page = max(1, min(int(page or 1), pages))
+    return {"users": rows[(page - 1) * PER_PAGE: page * PER_PAGE], "total": len(rows), "all": len(_rows_cache["users"]),
+            "page": page, "pages": pages}
 
 
 def user_detail(uid: str) -> dict:

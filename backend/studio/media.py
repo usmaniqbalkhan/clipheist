@@ -1,5 +1,4 @@
 """Getting video in: link download, probing, audio extraction, loudness."""
-import contextlib
 import json
 import re
 import subprocess
@@ -15,13 +14,67 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # ---------------------------------------------------------------- when YouTube refuses this server
 # YouTube sometimes refuses a server's downloads altogether ("sign in to confirm you're not a bot"). It is a
-# refusal of the server, not of one video, so once it happens YouTube links are turned away at once for a few
-# minutes, with a clear message, instead of each one waiting to fail. Then the next link simply tries again.
+# refusal of one way of asking from one address, not of the video. So YouTube is asked in several ways, in order:
+# straight from this machine; from this machine as another YouTube app (YouTube often still answers those); then
+# through each address in PEAKCUT_YT_PROXIES, if you set any (optional: proxies of your own, comma-separated). A way
+# that was refused is skipped for a few minutes. Only when every way is refused is the link turned away, with a
+# clear message. Saved YouTube cookies (Settings, Connected apps) are sent on every way.
 YT_PAUSE = 600
 _yt_refused_until = 0.0
+_ROUTE_REFUSED: dict = {}           # route name -> refused until
+_ROUTE_LAST = ""                    # the last route that worked: tried first next time
+
+
+def _routes() -> list:
+    out = [("direct", {}), ("apps", {"extractor_args": {"youtube": {"player_client": ["web_safari", "mweb", "android_vr"]}}})]
+    for n, p in enumerate(config.YT_PROXIES):
+        out.append((f"via{n}", {"proxy": p}))
+        out.append((f"via{n}-apps", {"proxy": p, "extractor_args": {"youtube": {"player_client": ["web_safari", "mweb", "android_vr"]}}}))
+    if _ROUTE_LAST:
+        out.sort(key=lambda r: r[0] != _ROUTE_LAST)
+    return out
+
+
+def _yt(url, work):
+    """work(extra yt-dlp options) for a link. For YouTube, every route is tried in turn until one is not refused."""
+    global _yt_refused_until, _ROUTE_LAST
+    if not is_youtube(url):
+        return work({})
+    check_youtube(url)
+    now = time.time()
+    tried = 0
+    for name, extra in _routes():
+        if _ROUTE_REFUSED.get(name, 0) > now:
+            continue
+        tried += 1
+        try:
+            try:
+                got = work(extra)
+            except Exception as e:  # noqa: BLE001 - one refused download is often a hiccup: once more, on fresh links
+                if not _DATA_REFUSED.search(str(e)) or _BOT_CHECK.search(str(e)):
+                    raise
+                time.sleep(3)
+                got = work(extra)
+        except Exception as e:  # noqa: BLE001
+            if _BOT_CHECK.search(str(e)) or _DATA_REFUSED.search(str(e)) or (extra.get("proxy") and _PROXY_DOWN.search(str(e))):
+                _ROUTE_REFUSED[name] = time.time() + YT_PAUSE
+                continue
+            raise
+        _ROUTE_LAST = name
+        return got
+    # every way is refused right now: turn YouTube links away for a little while instead of each one waiting to fail
+    _yt_refused_until = time.time() + (YT_PAUSE if tried else 60)
+    raise YouTubeBlocked(YT_BLOCKED)
+
+
+_PROXY_DOWN = re.compile(r"Unable to connect to proxy|ProxyError|Tunnel connection failed|Connection refused", re.I)
 YT_BLOCKED = ("YouTube isn't letting ClipHeist download videos right now. Upload the video file instead, or use a "
-              "Twitch or Kick link. YouTube links will be tried again in a few minutes.")
+              "Twitch or Kick link. An admin can fix this by adding YouTube cookies under Settings, Connected apps. "
+              "YouTube links will be tried again in a few minutes.")
 _BOT_CHECK = re.compile(r"not a bot|confirm you.?re not|sign in to confirm(?! your age)", re.I)
+# YouTube can also hand over the page and then refuse the video itself ("unable to download video data:
+# HTTP Error 403: Forbidden"): that is a refusal too, so the next way is tried
+_DATA_REFUSED = re.compile(r"HTTP Error 403|403: Forbidden|ffmpeg exited with code 8", re.I)   # a stretch of a video comes through ffmpeg, which reports the same refusal this way
 
 
 class YouTubeBlocked(RuntimeError):
@@ -45,25 +98,8 @@ def check_youtube(url: str):
 
 
 def note_refusal(url: str, err) -> bool:
-    """If this error is YouTube refusing the server, pause YouTube links for a while. True if it was."""
-    global _yt_refused_until
-    if is_youtube(url) and _BOT_CHECK.search(str(err)):
-        _yt_refused_until = time.time() + YT_PAUSE
-        return True
-    return False
-
-
-@contextlib.contextmanager
-def _youtube_guard(url):
-    check_youtube(url)
-    try:
-        yield
-    except YouTubeBlocked:
-        raise
-    except Exception as e:  # noqa: BLE001
-        if note_refusal(url, e):
-            raise YouTubeBlocked(YT_BLOCKED) from None
-        raise
+    """Is this error YouTube refusing the server? (The routes in _yt are already tried by then.)"""
+    return bool(is_youtube(url) and (_BOT_CHECK.search(str(err)) or _DATA_REFUSED.search(str(err))))
 
 
 def site_allowed(url: str) -> bool:
@@ -95,12 +131,17 @@ class _Quiet:
     def error(self, m): pass
 
 
+def cookie_opts() -> dict:
+    """The YouTube cookies an admin saved (Settings, Connected apps), if any. yt-dlp only sends them to YouTube."""
+    return {"cookiefile": str(config.YT_COOKIES)} if config.YT_COOKIES.is_file() else {}
+
+
 def _ydl(opts):
     import yt_dlp
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
     return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
-                             "concurrent_fragment_downloads": 4, **opts})
+                             "concurrent_fragment_downloads": 4, **cookie_opts(), **opts})
 
 
 def _video_format(height):
@@ -117,11 +158,14 @@ def _biggest(job_dir: Path, stem: str) -> Path:
 
 def info(url: str) -> dict:
     """Title, channel and length, without downloading anything."""
-    with _youtube_guard(url), _ydl({}) as ydl:
-        i = ydl.extract_info(url, download=False)
+    def work(x):
+        with _ydl(x) as ydl:
+            return ydl.extract_info(url, download=False)
+    i = _yt(url, work)
     return {"title": i.get("title") or "", "uploader": i.get("uploader") or i.get("channel") or "",
             "duration": float(i.get("duration") or 0), "is_live": bool(i.get("is_live")),
-            "thumbnail": i.get("thumbnail") or "", "kind": i.get("_type") or "video"}
+            "thumbnail": i.get("thumbnail") or "", "kind": i.get("_type") or "video",
+            "channel_url": i.get("channel_url") or i.get("uploader_url") or ""}
 
 
 def youtube_words(url: str):
@@ -130,16 +174,25 @@ def youtube_words(url: str):
     if not is_youtube(url):
         return None
     import json
-    with _youtube_guard(url), _ydl({}) as ydl:
-        i = ydl.extract_info(url, download=False)
-        auto = i.get("automatic_captions") or {}
-        key = next((k for k in auto if k.endswith("-orig")), None)
-        if not key and i.get("language") in auto:
-            key = i["language"]
-        track = next((f for f in auto.get(key) or [] if f.get("ext") == "json3" and f.get("url")), None) if key else None
-        if not track:
-            return None
-        raw = ydl.urlopen(track["url"]).read(40_000_000)
+    def work(x):
+        with _ydl(x) as ydl:
+            i = ydl.extract_info(url, download=False)
+            auto = i.get("automatic_captions") or {}
+            # the track in the language that was spoken: never YouTube's translation of it into English
+            lang = str(i.get("language") or "").strip().lower()
+            base = lang.split("-")[0] if lang else ""
+            candidates = [f"{lang}-orig", lang, f"{base}-orig", base]
+            key = next((c for c in candidates if c and c in auto), None)
+            if not key:
+                key = next((k for k in auto if k.endswith("-orig")), None)
+            track = next((f for f in auto.get(key) or [] if f.get("ext") == "json3" and f.get("url")), None) if key else None
+            if not track:
+                return None
+            return ydl.urlopen(track["url"]).read(40_000_000), key
+    got = _yt(url, work)
+    if not got:
+        return None
+    raw, key = got
     return _caption_words(json.loads(raw)), key.replace("-orig", "")
 
 
@@ -149,16 +202,18 @@ def youtube_english_words(url: str):
     if not is_youtube(url):
         return None
     import json
-    with _youtube_guard(url), _ydl({}) as ydl:
-        i = ydl.extract_info(url, download=False)
-        tracks = []
-        for group in (i.get("subtitles") or {}, i.get("automatic_captions") or {}):
-            for k in ("en", "en-US", "en-GB"):
-                tracks.append(next((f for f in group.get(k) or [] if f.get("ext") == "json3" and f.get("url")), None))
-        track = next((t for t in tracks if t), None)
-        if not track:
-            return None
-        raw = ydl.urlopen(track["url"]).read(40_000_000)
+    def work(x):
+        with _ydl(x) as ydl:
+            i = ydl.extract_info(url, download=False)
+            tracks = []
+            for group in (i.get("subtitles") or {}, i.get("automatic_captions") or {}):
+                for k in ("en", "en-US", "en-GB"):
+                    tracks.append(next((f for f in group.get(k) or [] if f.get("ext") == "json3" and f.get("url")), None))
+            track = next((t for t in tracks if t), None)
+            return ydl.urlopen(track["url"]).read(40_000_000) if track else None
+    raw = _yt(url, work)
+    if not raw:
+        return None
     words = _caption_words(json.loads(raw))
     return words or None
 
@@ -189,13 +244,35 @@ def _caption_words(data: dict) -> list:
 _PREVIEWS: dict = {}
 
 
-def preview(url: str) -> dict:
+def _oembed(url: str) -> dict:
+    """YouTube's public oEmbed answer for a video: title, channel and picture, without asking its player. Empty if
+    it has none (a channel, a private video...)."""
+    import urllib.parse
+    import urllib.request
+    try:
+        q = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url, safe="")
+        with urllib.request.urlopen(urllib.request.Request(q, headers={"User-Agent": "Mozilla/5.0"}), timeout=8) as r:
+            d = json.loads(r.read(200_000))
+    except Exception:  # noqa: BLE001
+        return {}
+    if not d.get("title"):
+        return {}
+    return {"title": d["title"], "uploader": d.get("author_name") or "", "duration": 0.0, "kind": "video",
+            "is_live": "/live/" in urllib.parse.urlparse(url).path, "thumbnail": d.get("thumbnail_url") or ""}
+
+
+def preview(url: str, deep: bool = True) -> dict:
     """What the user will get from a link, checked before any work starts. The thumbnail comes back inline
-    (the page may only load images from this site). Cached, so retyping a link costs nothing."""
+    (the page may only load images from this site). Cached, so retyping a link costs nothing. A YouTube link is
+    looked up through oEmbed, never YouTube's player; with deep=False nothing else is ever asked."""
     url = url.strip()
     if url in _PREVIEWS:
         return _PREVIEWS[url]
-    i = info(url)
+    i = _oembed(url) if is_youtube(url) else {}
+    if not i:
+        if is_youtube(url) and not deep:
+            raise ValueError("Couldn't open that video. Check the link is public and complete.")
+        i = info(url)
     if i["kind"] != "video" or not i["title"]:
         raise ValueError("That link is a channel or playlist, not a single video.")
     thumb = ""
@@ -253,9 +330,12 @@ def download_audio(url: str, job_dir: Path, on_progress=None, start=None, end=No
     if start or end:          # only the chosen part of the video: much less to fetch
         from yt_dlp.utils import download_range_func
         extra["download_ranges"] = download_range_func(None, [(max(0.0, start or 0), end or float("inf"))])
-    with _youtube_guard(url), _ydl({"format": "ba[ext=m4a]/ba/worst", "outtmpl": str(job_dir / "audio_src.%(ext)s"),
-               "progress_hooks": [hook], **extra}) as ydl:
-        ydl.download([url])
+
+    def work(x):
+        with _ydl({"format": "ba[ext=m4a]/ba/worst", "outtmpl": str(job_dir / "audio_src.%(ext)s"),
+                   "progress_hooks": [hook], **extra, **x}) as ydl:
+            ydl.download([url])
+    _yt(url, work)
     return _biggest(job_dir, "audio_src")
 
 
@@ -265,21 +345,29 @@ def download(url: str, job_dir: Path, height=720, on_progress=None) -> Path:
         total = d.get("total_bytes") or d.get("total_bytes_estimate")
         if on_progress and d.get("status") == "downloading" and total:
             on_progress(d.get("downloaded_bytes", 0) / total)
-    with _youtube_guard(url), _ydl({"format": _video_format(height), "merge_output_format": "mp4",
-                                    "outtmpl": str(job_dir / "source.%(ext)s"),
-                                    "progress_hooks": [hook]}) as ydl:
-        ydl.download([url])
+
+    def work(x):
+        with _ydl({"format": _video_format(height), "merge_output_format": "mp4",
+                   "outtmpl": str(job_dir / "source.%(ext)s"), "progress_hooks": [hook], **x}) as ydl:
+            ydl.download([url])
+    _yt(url, work)
     return _biggest(job_dir, "source")
 
 
-def download_section(url: str, out_dir: Path, stem: str, start: float, end: float, height=720) -> Path:
-    """Just one stretch of the video. The cut lands on a keyframe, so find_offset() pins the true start."""
+def download_section(url: str, out_dir: Path, stem: str, start: float, end: float, height=720, exact=False) -> Path:
+    """Just one stretch of the video. The cut lands on a keyframe, so find_offset() pins the true start; with
+    exact=True the cut is made at exactly `start` instead (slower), for when there is nothing to match against."""
     from yt_dlp.utils import download_range_func
     out_dir.mkdir(parents=True, exist_ok=True)
-    with _youtube_guard(url), _ydl({"format": _video_format(height), "merge_output_format": "mp4",
-               "outtmpl": str(out_dir / (stem + ".%(ext)s")),
-               "download_ranges": download_range_func(None, [(max(0.0, start), end)])}) as ydl:
-        ydl.download([url])
+    opts = {"format": _video_format(height), "merge_output_format": "mp4", "outtmpl": str(out_dir / (stem + ".%(ext)s")),
+            "download_ranges": download_range_func(None, [(max(0.0, start), end)])}
+    if exact:
+        opts["force_keyframes_at_cuts"] = True
+
+    def work(x):
+        with _ydl({**opts, **x}) as ydl:
+            ydl.download([url])
+    _yt(url, work)
     return _biggest(out_dir, stem)
 
 
@@ -326,11 +414,20 @@ def load_audio(wav: Path) -> np.ndarray:
     return data
 
 
+LOUDNESS_PIECE = 600       # seconds of audio worked out at a time
+
+
 def loudness_per_second(audio: np.ndarray) -> np.ndarray:
-    """RMS level in dB for each second of audio."""
+    """RMS level in dB for each second of audio.
+
+    Worked out ten minutes at a time. All at once, a day-long video needs a table of several gigabytes (one
+    float per sample), which most computers cannot find room for; this way it needs about 40 MB, whatever the length."""
     n = len(audio) // 16000
     if n == 0:
         return np.zeros(1, dtype=np.float32)
-    x = audio[: n * 16000].reshape(n, 16000).astype(np.float32) / 32768.0
-    rms = np.sqrt((x ** 2).mean(axis=1) + 1e-10)
-    return (20 * np.log10(rms)).astype(np.float32)
+    out = np.empty(n, dtype=np.float32)
+    for a in range(0, n, LOUDNESS_PIECE):
+        b = min(n, a + LOUDNESS_PIECE)
+        x = audio[a * 16000: b * 16000].reshape(b - a, 16000).astype(np.float32) / 32768.0
+        out[a:b] = 20 * np.log10(np.sqrt((x ** 2).mean(axis=1) + 1e-10))
+    return out

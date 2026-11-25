@@ -77,3 +77,31 @@ def keep_awake_loop(is_busy):
             ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if want else 0))
             state = want
         time.sleep(30)
+
+
+_admin_sent: dict = {}
+
+
+def admins(key: str, title: str, body: str = "", link: str = "/admin", every: float = 1800):
+    """Tell every admin at once, in the bell and by email, at most once per `every` seconds for the same `key`:
+    for trouble that stops ClipHeist working for everyone (the AI provider refusing calls, for one)."""
+    now = time.time()
+    if now - _admin_sent.get(key, 0) < every:
+        return
+    _admin_sent[key] = now
+
+    def run():
+        try:
+            import sqlalchemy as sa
+            from . import config, db, mailer, notices
+            with db.engine.connect() as c:
+                rows = c.execute(sa.select(db.users.c.id, db.users.c.email).where(
+                    db.users.c.is_admin == sa.true(), db.users.c.disabled == sa.false())).all()
+            for uid, email in rows:
+                notices.add(uid, "alert", title, body, link)
+                if email:
+                    mailer.send(email, "ClipHeist: " + title, title, body, "Open ClipHeist", config.PUBLIC_URL + link,
+                                "This alert is sent at most once every half hour while the problem lasts.")
+        except Exception:  # noqa: BLE001 - an alert must never break the work that raised it
+            pass
+    threading.Thread(target=run, daemon=True).start()

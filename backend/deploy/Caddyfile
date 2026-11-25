@@ -9,5 +9,9 @@
 	request_body @small {
 		max_size 1MB
 	}
-	reverse_proxy app:8765
+	# while the app restarts (a deploy, a settings change), requests wait for it instead of failing
+	reverse_proxy app:8765 {
+		lb_try_duration 45s
+		lb_try_interval 250ms
+	}
 }

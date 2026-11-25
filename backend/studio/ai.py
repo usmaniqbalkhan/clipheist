@@ -7,7 +7,19 @@
     PEAKCUT_AI_BASE_URL   only for "custom" (any service that speaks the OpenAI chat format), or to override
 
 Every service is asked for the same thing: JSON that follows a small schema. Gemini takes the schema directly.
-The others are told the schema in the prompt and asked for a JSON object, which works with any chat model."""
+The others are told the schema in the prompt and asked for a JSON object, which works with any chat model.
+
+One picture can also be shown (`see`), which is how the webcam is looked for on a gaming stream. A model that
+cannot look at pictures answers with something else, and that is simply taken as "it did not look".
+
+Gemini can also listen to sound (`hear`, `word_times`): a decided clip then gets its exact cut and its captions from
+the audio itself. Every other service returns None there, and the local speech-to-text result is used as it is.
+These optional .env settings only apply while the service is the one .env names:
+    PEAKCUT_AI_AUDIO_MODELS   models that listen (default: the usual models)
+    PEAKCUT_AI_FIX_MODELS     cheaper models for proofreading captions (default: the usual models)
+    PEAKCUT_AI_FIX_THINKING   Gemini thinking budget (a number) or level (a word) for those
+    PEAKCUT_AI_TIMING_MODEL   Gemini speech-to-text model that times every word in any language (off when empty)"""
+import base64
 import json
 import os
 import re
@@ -160,8 +172,14 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
         raise AIError(f"HTTP {r.status_code} {r.text[:200].replace(k or chr(0), '<key>')}")
     data = r.json()
     if how == "gemini":
-        found = [m.get("name", "").split("/")[-1] for m in data.get("models", [])
-                 if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+        found = []
+        for m in data.get("models", []):
+            if "generateContent" not in (m.get("supportedGenerationMethods") or []):
+                continue
+            mid = m.get("name", "").split("/")[-1]
+            low_id = mid.lower()
+            if mid and low_id != "aqa" and not any(t in low_id for t in ("-tts", "-image", "imagen-", "veo-", "lyria-", "embedding")):
+                found.append(mid)
     else:
         found = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
     return sorted({m for m in found if m})[:400]
@@ -177,12 +195,74 @@ def test() -> dict:
 
 
 class AIError(RuntimeError):
-    pass
+    """A failed AI call. `wait` is how many seconds the service asked us to wait before trying again, when it
+    said so (a Retry-After header, or Gemini's retryDelay)."""
+    def __init__(self, message, wait=None, daily=False):
+        super().__init__(message)
+        self.wait = wait
+        self.daily = daily        # the limit is for the whole day, so waiting a minute won't help
+
+
+class Unreadable(AIError):
+    """The AI answered (and the service counts its tokens), but the answer can't be used: cut off, blocked, broken."""
+    def __init__(self, message, sent=0, wrote=0):
+        super().__init__(message)
+        self.sent, self.wrote = sent, wrote
+
+
+problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashboard; cleared when it answers again
+
+
+def explain(e) -> str:
+    """What went wrong with an AI call, in words the owner can act on."""
+    text, low = str(e), str(e).lower()
+    name = (models() or ["?"])[0]
+    m = re.match(r"HTTP (\d{3})\b", text)
+    status = m.group(1) if m else ""
+    if status in ("401", "403") or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
+        return f"{label()} refused the key. Paste a working key under Settings, AI."
+    if "no longer available" in low or "deprecated" in low or "retired" in low or "discontinued" in low:
+        return f"{label()} has retired \"{name}\" (or it isn't available to new keys). Open Settings, AI, press Find models and pick a newer model."
+    # Only a 404 that is about a model says the model is unknown. A 400 like "API key not found" or a stray
+    # "404" inside some other message must not be reported as an unknown model.
+    if (status == "404" and "model" in low) or (not status and ("404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low)) \
+            or (status and "is not found for api version" in low):
+        return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
+    if "429" in text or "quota" in low or "rate limit" in low or "exhausted" in low:
+        return f"{label()} says the key has hit its limit or has no credit left. Check the account with {label()}, or try again later."
+    if "connect" in low or "timed out" in low or "timeout" in low or "getaddrinfo" in low or "refused" in low or "nodename" in low or "servname" in low or "nameresolutionerror" in low or "name resolution" in low:
+        return f"ClipHeist couldn't reach {label()}. Check the internet connection" + (" and that Ollama is running." if provider() == "ollama" else ".")
+    return ""
+
+
+def note_problem(e):
+    import time
+    why = explain(e)
+    if why:
+        problem.update(text=why, at=time.time())
+
+
+def clear_problem():
+    problem.update(text="", at=0.0)
+
+
+def asked_wait(r) -> float | None:
+    """How long the service asked us to wait, in seconds, or None when it didn't say."""
+    try:
+        v = (r.headers.get("retry-after") or "").strip()
+        if v:
+            return max(0.0, float(v))
+    except (ValueError, AttributeError):
+        pass
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', getattr(r, "text", "") or "")
+    return float(m.group(1)) if m else None
 
 
 def _fail(r, model):
     text = r.text[:300].replace(key() or "\0", "<key>")
-    raise AIError(f"HTTP {r.status_code} {text}")
+    limited = r.status_code in (429, 503)
+    raise AIError(f"HTTP {r.status_code} {text}", wait=asked_wait(r) if limited else None,
+                  daily=limited and bool(re.search(r"PerDay|per day|daily", r.text or "", re.I)))
 
 
 # ---------------------------------------------------------------- the schema, said in words for chat models
@@ -200,62 +280,325 @@ def _wrapped(prompt, schema):
             "\"items\", whose value follows this JSON Schema:\n" + json.dumps(_json_schema(schema)))
 
 
+def _json_chunks(text: str):
+    """Every balanced {...} or [...] in the text, in the order they appear."""
+    out, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0 and start is not None:
+                out.append(text[start:i + 1])
+                start = None
+            elif depth < 0:
+                depth = 0
+    return out
+
+
 def _parse(text):
-    """The JSON in an answer, even if the model wrapped it in a code fence or a sentence."""
+    """The JSON in an answer, even if the model wrapped it in a code fence or a sentence.
+
+    A model that is not careful sometimes puts a sentence in front of the JSON,
+    or a second object after it, or forgets a comma. The JSON is looked for
+    inside the answer rather than demanded of it."""
     text = (text or "").strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    out = None
     try:
         out = json.loads(text)
     except ValueError:
-        m = re.search(r"[\[{].*[\]}]", text, re.S)
-        if not m:
-            raise AIError("The AI did not answer with JSON.")
-        out = json.loads(m.group(0))
+        for chunk in _json_chunks(text):
+            try:
+                out = json.loads(chunk)
+                break
+            except ValueError:
+                continue
+        if out is None:
+            m = re.search(r"[\[{].*[\]}]", text, re.S)
+            if not m:
+                raise AIError("The AI did not answer with JSON.")
+            try:
+                out = json.loads(m.group(0))
+            except ValueError:
+                raise AIError("The AI did not answer with JSON.")
     if isinstance(out, dict) and "items" in out:
         out = out["items"]
     return out
 
 
 # ---------------------------------------------------------------- one call
-def call(model: str, prompt: str, schema: dict):
-    """Ask one model. Returns (the parsed JSON answer, tokens sent, tokens written back)."""
+def call(model: str, prompt: str, schema: dict, timeout: float | None = None, temperature: float = 0.4,
+         images=None, thinking: str = ""):
+    """Ask one model. Returns (the parsed JSON answer, tokens sent, tokens written back).
+
+    `timeout` is how long one answer may take. A live stream passes a short one, because a slow
+    answer must not stop the recording. `images`: pictures shown with the question, as (bytes, type) pairs,
+    for the models that can look at them. `thinking` is only understood by Gemini (a number is a thinking
+    budget, a word a thinking level) and is left out for every other service."""
     how = PROVIDERS[provider()][2]
-    return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema)
+    if how == "gemini":
+        return _gemini(model, prompt, schema, timeout, temperature, images=images, thinking=thinking)
+    return {"openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, timeout, temperature, images=images)
 
 
-def _gemini(model, prompt, schema):
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json", "responseSchema": schema}}
-    r = httpx.post(f"{base_url()}/{model}:generateContent", json=body, headers={"x-goog-api-key": key()}, timeout=120)
-    if r.status_code != 200:
-        _fail(r, model)
-    data = r.json()
-    text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
-    u = data.get("usageMetadata", {})
-    sent = int(u.get("promptTokenCount") or 0)
-    return json.loads(text), sent, max(0, int(u.get("totalTokenCount") or 0) - sent)   # the answer, and any thinking billed with it
+# ---------------------------------------------------------------- Gemini only: hearing sound
+# Gemini can listen to a stretch of audio: that is how a decided clip gets its exact cut and its captions from the
+# sound itself, and how words in languages the local speech model doesn't know get their exact times. The other
+# services can't, so these return None for them and the local transcript is used as it is.
+def _env_list(name: str) -> list:
+    return [m.strip() for m in os.environ.get(name, "").split(",") if m.strip()]
 
 
-def _openai(model, prompt, schema):
-    headers = {"Authorization": f"Bearer {key()}"} if key() else {}
-    body = {"model": model, "messages": [{"role": "user", "content": _wrapped(prompt, schema)}]}
-    # Most services accept these two extras; a few models refuse one of them, so they are dropped on a refusal.
-    extras = [{"temperature": 0.4, "response_format": {"type": "json_object"}}, {"response_format": {"type": "json_object"}}, {}]
-    r = None
-    for extra in extras:
-        r = httpx.post(f"{base_url()}/chat/completions", json={**body, **extra}, headers=headers, timeout=180)
-        if r.status_code not in (400, 422):
-            break
+def _env_is_current() -> bool:
+    """The extra model settings in .env belong to the service .env names. Once another one is picked in the
+    dashboard, they no longer apply."""
+    p = str(config.AI_PROVIDER or "").strip().lower()
+    return provider() == ALIASES.get(p, p)
+
+
+def can_hear() -> bool:
+    """Can the AI in use listen to audio? Only Gemini can."""
+    return ready() and provider() == "gemini"
+
+
+def audio_models() -> list:
+    """The models that listen (PEAKCUT_AI_AUDIO_MODELS), else the usual ones. Empty when the service can't hear."""
+    if not can_hear():
+        return []
+    return (_env_list("PEAKCUT_AI_AUDIO_MODELS") if _env_is_current() else []) or models()
+
+
+def fix_models() -> list:
+    """The models for small, simple jobs like proofreading captions (PEAKCUT_AI_FIX_MODELS), else the usual ones."""
+    return (_env_list("PEAKCUT_AI_FIX_MODELS") if _env_is_current() else []) or models()
+
+
+def fix_thinking() -> str:
+    """How much a Gemini model thinks on those small jobs (PEAKCUT_AI_FIX_THINKING); nothing for other services."""
+    return os.environ.get("PEAKCUT_AI_FIX_THINKING", "").strip() if provider() == "gemini" and _env_is_current() else ""
+
+
+def timing_model() -> str:
+    """Gemini's speech-to-text model that times each word in any language (PEAKCUT_AI_TIMING_MODEL), or ""."""
+    return os.environ.get("PEAKCUT_AI_TIMING_MODEL", "").strip() if can_hear() and _env_is_current() else ""
+
+
+def hear(model: str, prompt: str, audio: tuple, schema: dict, timeout: float | None = None, temperature: float = 0.4):
+    """Ask a Gemini model about a stretch of sound (bytes, type): (answer, tokens sent, tokens written), or None
+    when the service in use can't listen."""
+    if not can_hear() or not audio:
+        return None
+    return _gemini(model, prompt, schema, timeout, temperature, audio=audio)
+
+
+def word_times(audio: tuple, lang: str = "", timeout: float = 180):
+    """Each word said in this sound with its start and end, from Gemini's speech-to-text model: ([{"w", "s", "e"}],
+    tokens sent, tokens written), or None when there is no such model in use."""
+    model = timing_model()
+    if not model or not audio:
+        return None
+    tc = {"mode": {"type": "verbatim", "timestamp_granularities": ["word"]}}
+    if re.fullmatch(r"[a-z]{2,3}(-[A-Za-z]{2})?", lang or ""):
+        tc["language_codes"] = [lang]
+    body = {"model": "models/" + _gem(model), "generation_config": {"transcription_config": tc},
+            "input": [{"type": "audio", "data": base64.b64encode(audio[0]).decode(), "mime_type": audio[1]}]}
+    url = os.environ.get("PEAKCUT_AI_INTERACTIONS", "").strip() or base_url().rsplit("/models", 1)[0] + "/interactions"
+    r = httpx.post(url, json=body, headers={"x-goog-api-key": key()}, timeout=timeout)
     if r.status_code != 200:
         _fail(r, model)
     data = r.json()
     u = data.get("usage") or {}
+    sent = int(u.get("total_input_tokens") or 0)
+    wrote = int(u.get("total_output_tokens") or 0) + int(u.get("total_thought_tokens") or 0)
+    num = lambda v: float(str(v or "0").rstrip("s") or 0)                                   # noqa: E731
+    found = [{"w": re.sub(r"[\x00-\x1f\x7f]+", " ", str(a.get("text") or "")).strip()[:60],
+              "s": round(num(a.get("start_offset")), 2), "e": round(num(a.get("end_offset")), 2)}
+             for step in data.get("steps") or [] for part in step.get("content") or [] for a in part.get("annotations") or []
+             if a.get("type") == "word_info" and str(a.get("text") or "").strip()]
+    return found, sent, wrote
+
+
+def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, int, int]:
+    """Ask one model about one picture: (the answer as text, tokens in, tokens out).
+
+    Nothing is broken by a service that cannot look at pictures, or a model that is only text: the answer
+    comes back empty, or says something the caller does not understand, and the caller carries on without
+    it. The picture is a JPEG, passed as base64 inside the ordinary message."""
+    if not ready() or not image or not models():
+        return "", 0, 0
+    model = models()[0]
+    b64 = base64.b64encode(image).decode()
+    how = PROVIDERS[provider()][2]
+    if how == "gemini":
+        body = {"contents": [{"role": "user", "parts": [
+            {"text": prompt},
+            {"inline_data": {"mimeType": "image/jpeg", "data": b64}}]}]}
+        r = httpx.post(f"{base_url()}/{_gem(model)}:generateContent", json=body,
+                       headers={"x-goog-api-key": key()}, timeout=timeout or 120)
+        if r.status_code != 200:
+            _fail(r, model)
+        data = r.json()
+        text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
+        u = data.get("usageMetadata", {})
+        sent = int(u.get("promptTokenCount") or 0)
+        return text, sent, max(0, int(u.get("totalTokenCount") or 0) - sent)
+    if how == "anthropic":
+        body = {"model": model, "max_tokens": 300, "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+            {"type": "text", "text": prompt}]}]}
+        r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 120,
+                       headers={"x-api-key": key(), "anthropic-version": "2023-06-01"})
+        if r.status_code != 200:
+            _fail(r, model)
+        data = r.json()
+        text = "".join(p.get("text", "") for p in data.get("content") or [] if p.get("type") == "text")
+        u = data.get("usage") or {}
+        return text, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
+    headers = {"Authorization": f"Bearer {key()}"} if key() else {}
+    body = {"model": model, "stream": False, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}]}]}
+    r = httpx.post(f"{base_url()}/chat/completions", json=body, headers=headers, timeout=timeout or 120)
+    if r.status_code != 200:
+        _fail(r, model)
+    data = _openai_body(r)
+    text = (data["choices"][0]["message"].get("content") or "")
+    u = data.get("usage") or {}
+    return text, int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+
+
+def _gem(model: str) -> str:
+    """Gemini names models "models/gemini-2.5-flash"; the address already ends in /models, so only the bare id is used."""
+    return model.removeprefix("models/")
+
+
+def _media_parts(images=None, audio=None) -> list:
+    """Pictures and sound as Gemini parts, in order, before the words."""
+    parts = [{"inlineData": {"mimeType": typ, "data": base64.b64encode(raw).decode()}} for raw, typ in (images or [])]
+    if audio:
+        parts.append({"inlineData": {"mimeType": audio[1], "data": base64.b64encode(audio[0]).decode()}})
+    return parts
+
+
+def _gemini(model, prompt, schema, timeout=None, temperature=0.4, images=None, audio=None, thinking=""):
+    url = f"{base_url()}/{_gem(model)}:generateContent"
+    headers = {"x-goog-api-key": key()}
+    media = _media_parts(images, audio)
+    gen = {"temperature": temperature, "responseMimeType": "application/json", "responseSchema": schema}
+    if thinking:                   # a number is a thinking budget (older models), a word a thinking level (newer ones)
+        gen["thinkingConfig"] = {"thinkingBudget": int(thinking)} if str(thinking).isdigit() else {"thinkingLevel": str(thinking)}
+    body = {"contents": [{"role": "user", "parts": media + [{"text": prompt}]}], "generationConfig": gen}
+    r = httpx.post(url, json=body, headers=headers, timeout=timeout or 120)
+    used_plain = False
+    if r.status_code in (400, 422) and "api key" not in r.text.lower() and "api_key" not in r.text.lower():
+        # Models like Gemma in the Gemini list support generateContent without responseSchema.
+        plain = {"contents": [{"role": "user", "parts": media + [{"text": _wrapped(prompt, schema)}]}]}
+        r = httpx.post(url, json=plain, headers=headers, timeout=timeout or 120)
+        used_plain = True
+    if r.status_code != 200:
+        _fail(r, model)
+    data = r.json()
+    u = data.get("usageMetadata", {})
+    sent = int(u.get("promptTokenCount") or 0)
+    wrote = max(0, int(u.get("totalTokenCount") or 0) - sent)    # the answer, and any thinking counted with it
+    try:
+        text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
+        parsed = _parse(text) if used_plain else json.loads(text)
+    except (KeyError, IndexError, TypeError, ValueError, AIError) as e:
+        raise Unreadable("The AI's answer could not be read.", sent, wrote) from e
+    return parsed, sent, wrote
+
+
+def _openai_body(r):
+    """The answer, whether the service sent plain JSON or an event stream.
+
+    Some OpenAI-compatible servers answer with a stream of events unless the
+    request says otherwise, so the answer is read from whichever shape arrived.
+    A model that answers with a tool call instead of a message leaves the JSON in
+    the call's arguments, so that is used too."""
+    try:
+        data = r.json()
+    except ValueError:
+        data = _from_events(r.text)
+    for ch in data.get("choices") or []:
+        msg = ch.get("message") or {}
+        if (msg.get("content") or "").strip():
+            continue
+        for call in msg.get("tool_calls") or []:
+            args = (call.get("function") or {}).get("arguments")
+            if args:
+                msg["content"] = args
+                break
+    return data
+
+
+def _from_events(text: str) -> dict:
+    """Read an answer out of a server-sent event stream."""
+    parts, usage, calls = [], {}, {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        chunk = line[5:].strip()
+        if not chunk or chunk == "[DONE]":
+            continue
+        try:
+            d = json.loads(chunk)
+        except ValueError:
+            continue
+        usage = d.get("usage") or usage
+        for ch in d.get("choices") or []:
+            for piece in ((ch.get("message") or {}), (ch.get("delta") or {})):
+                if piece.get("content"):
+                    parts.append(piece["content"])
+                for call in piece.get("tool_calls") or []:
+                    i = call.get("index", 0)
+                    calls[i] = calls.get(i, "") + ((call.get("function") or {}).get("arguments") or "")
+    message = {"content": "".join(parts)}
+    if not message["content"] and calls:
+        message["content"] = "".join(calls.values())
+    return {"choices": [{"message": message}], "usage": usage}
+
+
+def _openai(model, prompt, schema, timeout=None, temperature=0.4, images=None):
+    headers = {"Authorization": f"Bearer {key()}"} if key() else {}
+    content = _wrapped(prompt, schema)
+    if images:
+        content = [{"type": "text", "text": content}] + [
+            {"type": "image_url", "image_url": {"url": f"data:{typ};base64," + base64.b64encode(raw).decode()}} for raw, typ in images]
+    body = {"model": model, "messages": [{"role": "user", "content": content}], "stream": False}
+    # Most services accept these two extras; a few models refuse one of them, so they are dropped on a refusal.
+    extras = [{"temperature": temperature, "response_format": {"type": "json_object"}}, {"response_format": {"type": "json_object"}}, {}]
+    r = None
+    for extra in extras:
+        r = httpx.post(f"{base_url()}/chat/completions", json={**body, **extra}, headers=headers, timeout=timeout or 180)
+        if r.status_code not in (400, 422):
+            break
+    if r.status_code != 200:
+        _fail(r, model)
+    data = _openai_body(r)
+    u = data.get("usage") or {}
     return _parse(data["choices"][0]["message"].get("content")), int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
 
 
-def _anthropic(model, prompt, schema):
-    body = {"model": model, "max_tokens": 8192, "messages": [{"role": "user", "content": _wrapped(prompt, schema)}]}
-    r = httpx.post(f"{base_url()}/messages", json=body, timeout=180,
+def _anthropic(model, prompt, schema, timeout=None, temperature=0.4, images=None):
+    content = [{"type": "image", "source": {"type": "base64", "media_type": typ, "data": base64.b64encode(raw).decode()}}
+               for raw, typ in (images or [])] + [{"type": "text", "text": _wrapped(prompt, schema)}]
+    body = {"model": model, "max_tokens": 8192, "temperature": temperature, "messages": [{"role": "user", "content": content}]}
+    r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 180,
                    headers={"x-api-key": key(), "anthropic-version": "2023-06-01"})
     if r.status_code != 200:
         _fail(r, model)

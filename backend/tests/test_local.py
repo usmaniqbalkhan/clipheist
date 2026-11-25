@@ -39,6 +39,12 @@ check("the owner's things work", c.post("/api/creators", json={"name": "Someone"
 check("the owner cannot delete themself", c.post("/api/account/delete", json={"confirm": st["user"]["email"]}, headers=ORIGIN).status_code, 409)
 
 # ---- with no sign-in, the address and the sender still have to be right
+check("our own page is believed even when the address in between was rewritten",
+      c.put("/api/settings", json={}, headers={"Origin": "null", "Sec-Fetch-Site": "same-origin"}).status_code, 200)
+check("another website is refused whatever address it claims",
+      c.put("/api/settings", json={}, headers={"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}).status_code, 403)
+check("another program on this computer's page is refused",
+      c.put("/api/settings", json={}, headers={"Origin": "http://localhost:3000", "Sec-Fetch-Site": "same-site"}).status_code, 403)
 check("another website cannot change things", c.post("/api/creators", json={"name": "x"}, headers={"Origin": "https://evil.example"}).status_code, 403)
 check("a made-up name pointing at this machine is refused", c.get("/api/status", headers={"Host": "evil.example:8765"}).status_code, 403)
 for host in ("localhost:8765", "192.168.1.20:8765", "[::1]:8765", "127.0.0.1"):
@@ -111,6 +117,27 @@ check("the test asks the saved model and reports back", (r.status_code, r.json()
 put({"provider": "gemini", "models": "g-fast", "key": "wrong-key-000000000000"})
 r = post("/api/ai/test")
 check("a failed test says why, without the key", (r.status_code, "wrong-key-000000000000" in r.text), (502, False))
+
+# ---- a clip downloaded on its own is saved under its title, not "clip01.mp4"
+from pathlib import Path  # noqa: E402
+from urllib.parse import unquote  # noqa: E402
+
+from studio import auth, ctx, jobs  # noqa: E402
+
+with ctx.as_user(auth.local_user().id):
+    job = jobs.create({"type": "file", "path": "", "name": "v.mp4"}, {}, enqueue=False)
+    (Path(job["dir"]) / "clips").mkdir(parents=True, exist_ok=True)
+    (Path(job["dir"]) / "clips" / "clip01.mp4").write_bytes(b"x" * 100)
+    (Path(job["dir"]) / "clips" / "clip02.mp4").write_bytes(b"x" * 100)
+    job["clips"] += [{"id": "clip01", "status": "done", "file": "clip01.mp4", "title": "Kai Gets Locked Up in GTA 6", "hook": "PRISON"},
+                     {"id": "clip02", "status": "done", "file": "clip02.mp4", "title": "", "hook": ""}]
+    jobs.save(job)
+r = c.get(f"/media/{job['id']}/clip01.mp4?download=1")
+check("a single clip downloads under its title", (r.status_code, "Kai Gets Locked Up in GTA 6.mp4" in unquote(r.headers.get("content-disposition", ""))), (200, True))
+r = c.get(f"/media/{job['id']}/clip02.mp4?download=1")
+check("a clip with no title keeps its id", "clip02.mp4" in r.headers.get("content-disposition", ""), True)
+r = c.get(f"/media/{job['id']}/clip01.mp4")
+check("playing a clip in the page is not turned into a download", "content-disposition" not in r.headers, True)
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil  # noqa: E402

@@ -22,6 +22,7 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+    image: clipheist-app:latest
     restart: unless-stopped
     depends_on:
       db:
@@ -32,6 +33,8 @@ services:
       PEAKCUT_PUBLIC_URL: https://${PEAKCUT_DOMAIN:?set PEAKCUT_DOMAIN in .env}
       # On a server everyone signs in. Set PEAKCUT_ACCOUNTS=0 in .env only if the site is private to you.
       PEAKCUT_ACCOUNTS: ${PEAKCUT_ACCOUNTS:-1}
+      # 1 when the recorder service below runs (COMPOSE_PROFILES=recorder): live recordings then happen there
+      PEAKCUT_RECORDER: ${PEAKCUT_RECORDER:-0}
     volumes:
       - data:/data
       - ./secrets:/secrets:ro
@@ -47,6 +50,27 @@ services:
     cpus: ${PEAKCUT_CPUS:-0}
     cpu_shares: ${PEAKCUT_CPU_SHARES:-1024}
     oom_score_adj: ${PEAKCUT_OOM_SCORE_ADJ:-0}
+
+  # Optional: records live streams apart from the app (studio/recorder.py), so updating or restarting the app never
+  # cuts a recording. Turn it on with COMPOSE_PROFILES=recorder and PEAKCUT_RECORDER=1 in .env (with own-https too:
+  # COMPOSE_PROFILES=own-https,recorder). It only needs a restart when studio/recorder.py or studio/capture.py
+  # change, and then only while nothing is recording:  docker compose up -d --force-recreate recorder
+  recorder:
+    profiles: ["recorder"]
+    image: peakcut-app:latest
+    depends_on: [app]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://peakcut:${POSTGRES_PASSWORD}@db:5432/peakcut
+      PEAKCUT_RECORDER: "1"
+    command: ["python", "-m", "studio.recorder"]
+    stop_grace_period: 20s
+    # The image's health check asks the web app, which does not run here: it would always say "unhealthy".
+    healthcheck:
+      disable: true
+    volumes:
+      - data:/data
 
   # Only on a server PeakCut has to itself: add COMPOSE_PROFILES=own-https to .env and Caddy handles HTTPS.
   caddy:

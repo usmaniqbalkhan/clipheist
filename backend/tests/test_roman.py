@@ -55,11 +55,11 @@ check("an answer of the wrong length keeps the words, in Roman letters", text(br
 
 # ---- what the AI writes for the screen
 c = brain._tidy({"hook": "चूना लगा", "title": "उसको चूना", "highlight_words": ["चूना", "boss"], "score": 90}, 1, 20)
-check("hook, title and highlighted words are in Roman letters", (c["hook"], c["title"], c["highlight_words"]) == ("CHUNA LAGA", "usko chuna", ["chuna", "boss"]), str(c))
+check("hook, title and highlighted words are in Roman letters", (c["hook"], c["title"], c["highlight_words"]) == ("Chuna laga", "usko chuna", ["chuna", "boss"]), str(c))
 
-# ---- the language rule: English stays, Hindi/Urdu in Roman letters, everything else translated into English
-check("which languages are translated", [brain.needs_translation(x) for x in ("en", "en-US", "hi", "ur", "es", "ar", "")]
-      == [False, False, False, False, True, True, False])
+# ---- the language rule: languages in Latin letters stay as said (Spanish stays Spanish); Hindi and Urdu stay too, in Roman letters; the rest become English
+check("which languages become English (Hindi and Urdu stay, in Roman letters)", [brain.needs_translation(x) for x in ("en", "en-US", "hi", "ur", "es", "pt-BR", "ar", "ja", "")]
+      == [False, False, False, False, False, False, True, True, False])
 def by_purpose(prompt, schema=None, purpose=""):
     if purpose == "Caption translation":
         n = int(prompt.split("Lines (")[1].split(")")[0])
@@ -70,17 +70,21 @@ es = [{"w": w, "s": s, "e": s + 0.4} for w, s in (("hola", 0.0), ("amigo", 0.5),
                                                      ("vamos", 5.0), ("a", 5.5), ("ganar", 6.0), ("esto", 6.5))]
 yt_en = [{"w": w, "s": i * 0.5, "e": i * 0.5 + 0.4} for i, w in enumerate("hi friend what is up today".split())]
 answers["now"] = ["Hi", "friend,", "what", "is", "up", "today?"]
+answers["now"] = ["Hola", "amigo,", "¿qué", "pasa", "hoy?", "Vamos", "a", "ganar", "esto."]
 out = brain.english_captions(es, "es", "", youtube_english=lambda: yt_en)
-check("Spanish with YouTube's English captions: those are used, tidied by the AI", text(out) == "Hi friend, what is up today?", text(out))
-out = brain.english_captions(es, "es", "", youtube_english=lambda: None)
-check("Spanish with no English from YouTube: the AI translates it", text(out) == "English line 1 English line 2", text(out))
-check("...each English line on the moment its line was said", out[0]["s"] == 0.0 and out[-1]["s"] >= 5.0 and out[-1]["e"] <= 6.95, str(out))
+check("Spanish stays Spanish, in its own spelling, even when YouTube has English", text(out) == "Hola amigo, ¿qué pasa hoy? Vamos a ganar esto.", text(out))
+hi_words = [{"w": w, "s": s, "e": s + 0.4} for w, s in (("यार", 0.0), ("ये", 0.5), ("क्या", 1.0), ("है", 1.5), ("भाई", 5.0), ("चलो", 5.5))]
+out = brain.english_captions(hi_words, "hi", "", youtube_english=lambda: None)
+check("Hindi stays Hindi, in Roman letters (Hinglish), never translated", text(out) == "yaar ye kya hai bhai chalo", text(out))
+check("...each word on its own moment", [w["s"] for w in out] == [0.0, 0.5, 1.0, 1.5, 5.0, 5.5], str(out))
+out = brain.english_captions(hi_words, "hi", "", youtube_english=lambda: yt_en)
+check("...even when YouTube has English captions", text(out) == "yaar ye kya hai bhai chalo", text(out))
 brain.ask_ai = no_ai
 ar = ws("مرحبا يا صديقي كيف حالك")
 out = brain.english_captions(ar, "ar", "", youtube_english=lambda: None)
 check("Arabic with neither: still in English letters", not any(roman.needs_roman(w["w"]) for w in out) and len(out) == 5, text(out))
 out = brain.english_captions(ws("जो उसको"), "hi", "")
-check("Hindi is never translated, only spelled in Roman letters", text(out) == "jo usko", text(out))
+check("Hindi with no AI at all: never drawn in its own script, spelled in Roman letters", text(out) == "jo usko", text(out))
 brain.ask_ai = by_purpose
 answers["now"] = ["Hello", "there", "friend."]
 check("English stays English", text(brain.english_captions(ws("hello there friend"), "en", "")) == "Hello there friend.")

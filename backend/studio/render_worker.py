@@ -4,7 +4,8 @@ with the clip, its cover, its captions file and the downloaded stretch (kept so 
 
 POST /cut   (Authorization: Bearer <PEAKCUT_RENDER_TOKEN>)   JSON:
     url, want, until, quality, name, hay (base64 int16 mono 16 kHz audio), hay_at (seconds where hay starts),
-    clip {start, end, hook, style, highlight_words, layout, watermark}, words [{w, s, e}] with times in the video
+    clip {start, end, hook, style, layout, look, captions, highlight_words, watermark, ...} (remote_render.CLIP_FIELDS),
+    extras {note}, words [{w, s, e}] with times in the video
 The zip holds <name>.mp4, <name>.jpg, <name>.ass, <name>.src.mp4 and meta.json."""
 import base64
 import hmac
@@ -52,7 +53,8 @@ def cut(p: dict) -> bytes:
             raise RuntimeError("The downloaded part of the video does not cover this clip.")
         local = dict(c, start=start - off, end=end - off)
         near = [dict(w, s=w["s"] - off, e=w["e"] - off) for w in p.get("words") or []]
-        out = render.render_clip(piece, work / "out", name, local, near, meta["width"], meta["height"])
+        extras = {k: v for k, v in (p.get("extras") or {}).items() if k == "note" and v}
+        out = render.render_clip(piece, work / "out", name, local, near, meta["width"], meta["height"], extras=extras or None)
         info = {"offset": round(off, 2), "src_end": round(off + meta["duration"], 2), "start": start, "end": end,
                 "width": meta["width"], "height": meta["height"], "layout": out["layout"]}
         buf = io.BytesIO()

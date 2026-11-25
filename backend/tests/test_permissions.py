@@ -22,8 +22,14 @@ def client():
 
 
 def signup(email, extra=None):
+    """Sign up, confirm the email the way the link would, then sign in (nobody gets in before confirming)."""
     c = client()
     r = c.post("/api/auth/signup", json={"email": email, "password": "test-pass-123", "name": "<img src=x onerror=alert(1)>", **(extra or {})}, headers=ORIGIN)
+    assert r.status_code == 200 and r.json().get("confirm"), r.text
+    subprocess.run([PY, "-c", "import sys, sqlalchemy as sa; from studio import auth, db; db.init(); "
+                    "uid = db.engine.connect().execute(sa.select(db.users.c.id).where(db.users.c.email == sys.argv[1])).scalar(); auth.mark_verified(uid)", email],
+                   cwd=ROOT, env=os.environ, check=True, capture_output=True)
+    r = c.post("/api/auth/login", json={"email": email, "password": "test-pass-123"}, headers=ORIGIN)
     assert r.status_code == 200, r.text
     return c, r.json()["user"]
 
@@ -46,6 +52,9 @@ for who, c in (("anon", anon), ("user", a)):
     for path in ("/admin", "/admin/users", "/api/admin/overview", f"/api/admin/users/{ub['id']}"):
         check(f"{who} GET {path} -> 404", c.get(path).status_code, 404)
     check(f"{who} disable -> 404", c.post(f"/api/admin/users/{ub['id']}/disabled", json={"disabled": True}, headers=ORIGIN).status_code, 404)
+    check(f"{who} cannot see, download or remove speech models",
+          (c.get("/api/speech").status_code, c.post("/api/speech/ar", headers=ORIGIN).status_code,
+           c.delete("/api/speech/ar", headers=ORIGIN).status_code), (404, 404, 404) if who == "user" else (401, 401, 401))
 check("anon /app -> login", anon.get("/app").status_code, 303)
 check("anon /api/status -> 401", anon.get("/api/status").status_code, 401)
 
@@ -83,7 +92,9 @@ ov = a.get("/api/admin/overview")
 check("admin overview", ov.status_code, 200)
 o = ov.json()
 check("overview counts users", o["totals"]["users"], 2)
-check("overview lists both", sorted(u["email"] for u in o["users"]), ["alice@example.com", "bob@example.com"])
+ul = a.get("/api/admin/users").json()
+check("the account list has both", sorted(u["email"] for u in ul["users"]), ["alice@example.com", "bob@example.com"])
+check("a normal user cannot read the account list", b.get("/api/admin/users").status_code, 404)
 check("overview never includes password hashes", "password" in ov.text or "scrypt" in ov.text, False)
 
 check("user detail", a.get(f"/api/admin/users/{ub['id']}").json()["email"], "bob@example.com")

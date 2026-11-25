@@ -24,10 +24,11 @@ _states: dict = {}   # one-time values for the connect redirects: state -> (user
 
 SECRET_KEYS = ("discord_webhook", "telegram_token")
 SETTING_DEFAULTS = {"discord_webhook": "", "telegram_token": "", "telegram_chat": "", "paused": False,
-                    "digest_hour": 8, "last_digest": "", "tour_done": False}
+                    "digest_hour": 8, "last_digest": "", "tour_done": False, "os_seen": False, "rated": False, "day_limit": 3}
 
 YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 IG = "https://graph.instagram.com"
+FB = "https://graph.facebook.com/v21.0"      # Instagram through Facebook login lives here
 IG_UPLOAD = "https://rupload.facebook.com/ig-api-upload/v21.0"
 IG_SCOPES = "instagram_business_basic,instagram_business_content_publish"
 TT = "https://open.tiktokapis.com/v2"
@@ -105,6 +106,19 @@ def app_keys(name: str) -> tuple:
     return (config.env(id_env) or "").strip(), (config.env(secret_env) or "").strip()
 
 
+def ig_config() -> str:
+    """The Facebook login configuration id for Instagram (set in the dashboard or PEAKCUT_IG_CONFIG_ID). When there
+    is one, Instagram connects through Facebook login; without it, through Instagram's own login."""
+    return str((_apps_saved().get("instagram") or {}).get("config") or config.env("PEAKCUT_IG_CONFIG_ID") or "").strip()
+
+
+def app_open(platform: str) -> bool:
+    """Is this platform's app open to everyone? Yes unless an admin unticked it: until a platform approves an app
+    only its testers can sign in, so ordinary users are then not offered a Connect button that would fail; admins
+    always see it to test."""
+    return bool((_apps_saved().get(APP_FOR[platform]) or {}).get("open", True))
+
+
 def can_connect(platform: str) -> bool:
     return all(app_keys(APP_FOR[platform]))
 
@@ -121,11 +135,13 @@ def apps_public() -> dict:
         out[platform] = {"ready": bool(cid and secret), "id_label": APPS[name][0], "secret_label": APPS[name][1],
                          "id_hint": cid[:6] + "…" if len(cid) > 10 else cid, "redirect": redirect_for(platform),
                          "https": config.PUBLIC_URL.startswith("https://"),
-                         "from_dashboard": bool((_apps_saved().get(name) or {}).get("id"))}
+                         "from_dashboard": bool((_apps_saved().get(name) or {}).get("id")), "open": app_open(platform)}
+    out["instagram"].update(config_label="Login configuration ID (Facebook login, newer Meta apps)", facebook=bool(ig_config()),
+                            config_hint=ig_config()[:6] + "…" if len(ig_config()) > 10 else ig_config())
     return out
 
 
-def save_app(platform: str, cid: str, secret: str) -> dict:
+def save_app(platform: str, cid: str, secret: str, config_id=None, opened=None) -> dict:
     """Save the server's app for a platform, from the dashboard. An empty secret keeps the saved one."""
     if platform not in APP_FOR:
         raise ValueError("Unknown platform.")
@@ -140,9 +156,14 @@ def save_app(platform: str, cid: str, secret: str) -> dict:
     secret = secret or (old.get("secret") if old.get("id") == cid else "")
     if not secret:
         raise ValueError(f"Paste the {APPS[name][1]} too.")
+    cfg = str(config_id if config_id is not None else old.get("config", "")).strip()[:60]
+    if cfg and not re.fullmatch(r"\d{5,30}", cfg):
+        raise ValueError("The login configuration ID is only digits. Paste it exactly as Meta shows it.")
     with _lock:
         data = dict(_apps_saved())
-        data[name] = {"id": cid, "secret": secret}
+        was_open = (_apps_saved().get(name) or {}).get("open", True)
+        data[name] = {"id": cid, "secret": secret, "open": bool(opened) if opened is not None else was_open,
+                      **({"config": cfg} if cfg and platform == "instagram" else {})}
         tmp = _apps_file().with_suffix(".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")
         try:
@@ -180,6 +201,12 @@ def connect_url(platform: str) -> str:
         return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
             "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": YT_SCOPES,
             "access_type": "offline", "prompt": "consent", "state": state})
+    if platform == "instagram" and ig_config():
+        # exactly the login link Meta's dashboard gives for an "Instagram Login Compatible" configuration: the page
+        # leads with "Continue with Instagram", so people sign in with Instagram, not a Facebook account
+        return "https://www.facebook.com/dialog/oauth?" + urlencode({
+            "client_id": cid, "config_id": ig_config(), "display": "popup", "override_default_response_type": "true",
+            "redirect_uri": redirect, "response_type": "code", "state": state, "prompt": "login"})
     if platform == "instagram":
         return "https://www.instagram.com/oauth/authorize?" + urlencode({
             "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": IG_SCOPES, "state": state})
@@ -250,10 +277,12 @@ def save_settings(patch: dict) -> dict:
         for k, v in patch.items():
             if k not in SETTING_DEFAULTS:
                 continue
-            if k in ("paused", "tour_done"):
+            if k in ("paused", "tour_done", "os_seen", "rated"):
                 v = bool(v)
             elif k == "digest_hour":
                 v = max(0, min(23, int(v)))
+            elif k == "day_limit":
+                v = max(1, min(20, int(v)))  # most posts the schedule takes on one day
             else:
                 v = str(v).strip()[:300]
                 if k == "discord_webhook" and v and not v.startswith("https://discord.com/api/webhooks/"):
@@ -342,7 +371,8 @@ def youtube_upload(acc, path: Path, title: str, description: str, tags: list, pr
     token = _yt_token(acc)
     meta = {"snippet": {"title": re.sub(r"[<>]", "", title)[:100] or "Clip", "description": re.sub(r"[<>]", "", description)[:4900],
                         "tags": tags[:15], "categoryId": "20"},
-            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
+            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "embeddable": True,
+                       "publicStatsViewable": True, "license": "youtube", "containsSyntheticMedia": False}}
     size = path.stat().st_size
     start = _check(httpx.post("https://www.googleapis.com/upload/youtube/v3/videos",
                               params={"uploadType": "resumable", "part": "snippet,status"}, json=meta,
@@ -353,6 +383,28 @@ def youtube_upload(acc, path: Path, title: str, description: str, tags: list, pr
                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "video/mp4"}, timeout=900),
                       "Uploading to YouTube").json()
     return done["id"], f"https://www.youtube.com/shorts/{done['id']}"
+
+
+def youtube_states(acc, ids: list) -> dict:
+    """{video id: (state, why)} for uploaded videos: "processed" once YouTube has finished with it and it can be
+    watched, "uploaded" while YouTube is still processing, or "failed" / "rejected" / "deleted" (why: YouTube's reason)."""
+    out = {}
+    for i in range(0, len(ids), 50):
+        r = _check(httpx.get("https://www.googleapis.com/youtube/v3/videos",
+                             params={"part": "status,processingDetails", "id": ",".join(ids[i:i + 50])},
+                             headers={"Authorization": f"Bearer {_yt_token(acc)}"}, timeout=30), "Checking the YouTube upload").json()
+        seen = set()
+        for it in r.get("items", []):
+            st = it.get("status") or {}
+            seen.add(it["id"])
+            state = st.get("uploadStatus") or "uploaded"
+            if (it.get("processingDetails") or {}).get("processingStatus") == "failed":
+                state = "failed"
+            out[it["id"]] = (state, st.get("failureReason") or st.get("rejectionReason") or "")
+        for v in ids[i:i + 50]:
+            if v not in seen:
+                out[v] = ("deleted", "")
+    return out
 
 
 def youtube_views(acc, ids: list) -> dict:
@@ -367,7 +419,173 @@ def youtube_views(acc, ids: list) -> dict:
 
 
 # ------------------------------------------------------------------ Instagram (Instagram Login, professional accounts)
+def _instagram_finish_fb(code: str) -> dict:
+    """Facebook login: the code becomes the person's access token (swapped for a 60-day one and renewed weekly), which
+    names the Instagram accounts they shared; every one of them is connected, and the first is returned."""
+    cid, secret = app_keys("instagram")
+    tok = _check(httpx.get(f"{FB}/oauth/access_token", params={
+        "client_id": cid, "client_secret": secret, "redirect_uri": redirect_for("instagram"), "code": code}, timeout=30),
+        "Instagram sign-in").json()
+    try:        # a person's token is swapped for a 60-day one; a business (system user) token never expires and stays as it is
+        token = _fb_long(tok["access_token"], cid, secret)
+    except Exception:  # noqa: BLE001
+        token = tok["access_token"]
+    ids, fb_user, scopes, page_ids = [], "", set(), []
+    try:        # what was shared, from the token itself: Instagram accounts and Pages
+        info = _check(httpx.get(f"{FB}/debug_token", params={"input_token": token, "access_token": f"{cid}|{secret}"}, timeout=30),
+                      "Reading what was shared").json().get("data", {})
+        fb_user = str(info.get("user_id") or "")
+        scopes = set(info.get("scopes") or [])
+        for g in info.get("granular_scopes") or []:
+            sc = str(g.get("scope", ""))
+            scopes.add(sc)
+            if sc.startswith("instagram"):
+                ids += [str(i) for i in g.get("target_ids") or []]
+            elif sc.startswith("pages_"):
+                page_ids += [str(i) for i in g.get("target_ids") or []]
+    except Exception:  # noqa: BLE001
+        pass
+    fields = "instagram_business_account{id},connected_instagram_account{id}"
+    pages = []
+    try:        # the Pages the person manages, with the Instagram account linked to each
+        pages = _check(httpx.get(f"{FB}/me/accounts", params={"fields": "id," + fields, "limit": 100, "access_token": token}, timeout=30),
+                       "Reading the Instagram accounts").json().get("data", []) or []
+    except Exception:  # noqa: BLE001
+        pass
+    seen = {str(p.get("id")) for p in pages}
+    for pid in [p for p in dict.fromkeys(page_ids) if p not in seen][:20]:   # Pages shared through a business, not listed above
+        try:
+            pages.append(_check(httpx.get(f"{FB}/{pid}", params={"fields": "id," + fields, "access_token": token}, timeout=30),
+                                "Reading a Page").json())
+        except Exception:  # noqa: BLE001
+            pass
+    for p in pages:
+        for k in ("instagram_business_account", "connected_instagram_account"):
+            if (p.get(k) or {}).get("id"):
+                ids.append(str(p[k]["id"]))
+    ids = list(dict.fromkeys(ids))
+    notes = []
+    if not ids:     # a business (system user) sign-in: the Instagram account is an asset of that user, not behind a Page
+        ids, notes = _ig_probe(token)
+        if ids and ids[0] == "ig":      # only Instagram's own API knows this sign-in
+            return _instagram_save(token)
+    # what came back, for working out a failed connect (counts and permission names only, nothing personal)
+    print(f"instagram connect: scopes={sorted(scopes)} pages={len(pages)} instagram={len(ids)} probe={notes}", flush=True)
+    if not ids:
+        why = f" (Meta shared: {', '.join(sorted(scopes)) or 'no permissions'}; Pages: {len(pages)}; {' '.join(notes)})"
+        if scopes and not {"instagram_basic", "instagram_content_publish"} <= scopes:
+            raise ValueError("Instagram was not shared. Connect again and leave every permission ticked." + why)
+        if not pages:
+            raise ValueError("No Instagram account was shared. Connect again and pick your Instagram account when Meta asks." + why)
+        raise ValueError("The shared Facebook Page has no Instagram account linked. Link your Instagram Business or Creator "
+                         "account to that Page (Instagram: Settings, Account type and tools, or the Page's settings), then connect again." + why)
+    first = None
+    for ig_id in ids[:5]:
+        acc = _instagram_save_fb(token, ig_id, fb_user)
+        first = first or acc
+    return first
+
+
+def _ig_probe(token: str):
+    """Other places a sign-in can name its Instagram accounts. Returns (ids, notes): ids is ["ig"] when only
+    Instagram's own API answers; notes say what each place returned (codes and counts only, nothing personal)."""
+    ids, notes = [], []
+    sub = "id,instagram_business_account{id},connected_instagram_account{id}"
+    tries = [("me", f"{FB}/me", {"fields": "id"}),
+             # where Meta's Unified login (every app made since late 2026) lists the Instagram accounts it shared
+             ("assigned_ig", f"{FB}/me/assigned_instagram_accounts", {"fields": "id", "limit": 100}),
+             ("assigned_pages", f"{FB}/me/assigned_pages", {"fields": sub}),
+             ("ig_accounts", f"{FB}/me/instagram_accounts", {"fields": "id"}),
+             ("ig_business", f"{FB}/me/instagram_business_accounts", {"fields": "id"})]
+    for name, url, params in tries:
+        try:
+            r = httpx.get(url, params={**params, "access_token": token}, timeout=20)
+        except Exception:  # noqa: BLE001
+            notes.append(f"{name}:x"); continue
+        try:
+            j = r.json() or {}
+        except Exception:  # noqa: BLE001
+            j = {}
+        if r.status_code >= 400:
+            notes.append(f"{name}:{(j.get('error') or {}).get('code', r.status_code)}"); continue
+        rows = j.get("data") if isinstance(j.get("data"), list) else None
+        notes.append(f"{name}:{len(rows) if rows is not None else 'ok'}")
+        for row in rows or []:
+            if name == "assigned_pages":
+                ids += [str((row.get(k) or {}).get("id")) for k in ("instagram_business_account", "connected_instagram_account")
+                        if (row.get(k) or {}).get("id")]
+            elif row.get("id"):
+                ids.append(str(row["id"]))
+    if not ids:
+        try:
+            r = httpx.get(f"{IG}/me", params={"fields": "user_id"}, headers={"Authorization": f"Bearer {token}"}, timeout=20)
+            notes.append(f"instagram_api:{r.status_code}")
+            if r.status_code < 400 and r.json().get("user_id"):
+                return ["ig"], notes
+        except Exception:  # noqa: BLE001
+            notes.append("instagram_api:x")
+    return list(dict.fromkeys(ids)), notes
+
+
+def _fb_long(token: str, cid: str = "", secret: str = "") -> str:
+    """A short-lived Facebook token swapped for a long-lived (60 day) one; the same call renews a long-lived one."""
+    if not cid:
+        cid, secret = app_keys("instagram")
+    r = _check(httpx.get(f"{FB}/oauth/access_token", params={"grant_type": "fb_exchange_token", "client_id": cid,
+                                                            "client_secret": secret, "fb_exchange_token": token}, timeout=30),
+               "Keeping the Instagram sign-in").json()
+    return r.get("access_token") or token
+
+
+def _instagram_save_fb(token: str, ig_id: str, fb_user: str = "") -> dict:
+    # account_type only exists on Instagram's own API; asking Facebook's for it fails the whole read
+    me = _check(httpx.get(f"{FB}/{ig_id}", params={"fields": "id,username", "access_token": token}, timeout=30),
+                "Reading the Instagram account").json()
+    kind = str(me.get("account_type") or "")
+    acc = {"id": f"ig_{me.get('id') or ig_id}", "platform": "instagram", "api": "facebook", "name": "@" + str(me.get("username") or ig_id),
+           "added": time.time(), "user_id": str(me.get("id") or ig_id), "token": token, "token_time": time.time(),
+           "fb_user": fb_user, "detail": {"BUSINESS": "Business account", "MEDIA_CREATOR": "Creator account"}.get(kind.upper(), "")}
+    _put(acc)
+    return acc
+
+
+def meta_user(signed_request: str) -> str:
+    """The Facebook user id inside a signed request from Meta (the removal and deletion callbacks), after checking
+    it was signed with this app's secret. Raises ValueError if it was not."""
+    try:
+        sig, payload = (signed_request or "").split(".", 1)
+        want = base64.urlsafe_b64encode(hmac.new(app_keys("instagram")[1].encode(), payload.encode(), hashlib.sha256).digest()).rstrip(b"=")
+        if not hmac.compare_digest(sig.encode(), want):
+            raise ValueError
+        data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return str(data["user_id"])
+    except Exception:  # noqa: BLE001
+        raise ValueError("That request was not signed by Meta.") from None
+
+
+def forget_facebook_user(fb_user: str) -> int:
+    """Remove every Instagram account connected by this Facebook person, for whoever in ClipHeist connected it."""
+    if not fb_user:
+        return 0
+    n = 0
+    users = config.DATA_DIR / "users"
+    for d in users.iterdir() if users.is_dir() else []:
+        f = d / "accounts" / "accounts.json"
+        try:
+            items = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        keep = [a for a in items if not (a.get("platform") == "instagram" and a.get("fb_user") == fb_user)]
+        if len(keep) != len(items):
+            with _lock:
+                f.write_text(json.dumps(keep, indent=1), encoding="utf-8")
+            n += len(items) - len(keep)
+    return n
+
+
 def _instagram_finish(code: str) -> dict:
+    if ig_config():
+        return _instagram_finish_fb(code)
     cid, secret = app_keys("instagram")
     short = _check(httpx.post("https://api.instagram.com/oauth/access_token", data={
         "client_id": cid, "client_secret": secret, "grant_type": "authorization_code",
@@ -398,7 +616,19 @@ def instagram_add(token: str) -> dict:
     return _instagram_save(token.strip())
 
 
+def _ig_host(acc) -> str:
+    return FB if acc.get("api") == "facebook" else IG
+
+
 def _ig_token(acc) -> str:
+    if acc.get("api") == "facebook":
+        if time.time() - acc.get("token_time", 0) > 7 * 86400:      # renewed weekly, so it never lapses while ClipHeist is used
+            try:
+                acc.update(token=_fb_long(acc["token"]), token_time=time.time())
+                _put(acc)
+            except Exception:  # noqa: BLE001 - keep using the current token until it truly expires
+                pass
+        return acc["token"]
     if time.time() - acc.get("token_time", 0) > 7 * 86400:  # tokens last 60 days; refresh weekly
         try:
             r = _check(httpx.get(f"{IG}/refresh_access_token", params={"grant_type": "ig_refresh_token"},
@@ -415,8 +645,9 @@ def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
     reach, the file is sent instead (only possible for some app types)."""
     token = _ig_token(acc)
     auth = {"Authorization": f"Bearer {token}"}
-    uid = acc["user_id"]
-    if config.PUBLIC_URL.startswith("https://") and job_id:
+    uid, IG = acc["user_id"], _ig_host(acc)
+    reachable = config.PUBLIC_URL.startswith("https://") and not any(h in config.PUBLIC_URL for h in ("localhost", "127.0.0.1", "[::1]", ".local", ".test"))
+    if reachable and job_id:
         box = _check(httpx.post(f"{IG}/{uid}/media", data={"media_type": "REELS", "video_url": clip_link(job_id, path.name),
                                                            "caption": caption[:2200], "share_to_feed": "true"},
                                 headers=auth, timeout=60), "Starting the Instagram post").json()
@@ -450,7 +681,7 @@ def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
 
 
 def instagram_views(acc, media_id: str):
-    r = httpx.get(f"{IG}/{media_id}/insights", params={"metric": "views"},
+    r = httpx.get(f"{_ig_host(acc)}/{media_id}/insights", params={"metric": "views"},
                   headers={"Authorization": f"Bearer {_ig_token(acc)}"}, timeout=30)
     if r.status_code != 200:
         return None

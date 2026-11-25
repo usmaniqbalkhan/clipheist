@@ -20,10 +20,10 @@ header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line)
 .bar nav a{font-size:14px;font-weight:600;color:var(--dim);text-decoration:none;padding:6px 12px;border-radius:8px;white-space:nowrap;transition:background-color .15s ease,color .15s ease}
 .bar nav a:hover{background:#EDE3DB;color:var(--text)}
 body[data-page=privacy] nav a[href="/privacy"],body[data-page=terms] nav a[href="/terms"],
-body[data-page=acceptable-use] nav a[href="/acceptable-use"]{background:var(--brand);color:var(--ink)}
+body[data-page=acceptable-use] nav a[href="/acceptable-use"],body[data-page=data-deletion] nav a[href="/data-deletion"]{background:var(--brand);color:var(--ink)}
 main{max-width:860px;margin:0 auto;padding:40px 20px 80px}
 article{display:none}
-body[data-page=privacy] #privacy,body[data-page=terms] #terms,body[data-page=acceptable-use] #acceptable-use{display:block}
+body[data-page=privacy] #privacy,body[data-page=terms] #terms,body[data-page=acceptable-use] #acceptable-use,body[data-page=data-deletion] #data-deletion{display:block}
 h1{font-size:clamp(30px,4vw,40px);line-height:1.15;letter-spacing:-.03em;margin:0 0 6px;color:var(--ink)}
 .updated{color:var(--faint);font-size:14px;margin:0 0 28px}
 h2{font-size:19px;letter-spacing:-.01em;margin:34px 0 8px;color:var(--ink)}
@@ -53,7 +53,7 @@ article{animation:legalin .35s ease both}
 </head>
 <body data-page="{{PAGE}}">
 <header><div class="bar"><a href="/" aria-label="ClipHeist home"><img src="/brand/logo.svg" alt="ClipHeist" width="120" height="30"></a>
-  <nav aria-label="Legal pages"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/acceptable-use">Acceptable use</a></nav></div></header>
+  <nav aria-label="Legal pages"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/acceptable-use">Acceptable use</a><a href="/data-deletion">Data deletion</a></nav></div></header>
 <main>
 
 <!-- ============================================================ TERMS -->
@@ -124,6 +124,26 @@ article{animation:legalin .35s ease both}
 
 <h2>14. Contact</h2>
 <p>{{CONTACT}}</p>
+</article>
+
+<!-- ============================================================ DATA DELETION -->
+<article id="data-deletion">
+<h1>Data deletion</h1>
+<p class="updated">Last updated 25 November 2026</p>
+<p>You can remove what {{NAME}} holds about you at any time. Nothing here needs a request to us.</p>
+<h2>Disconnect an Instagram, TikTok or YouTube account</h2>
+<ol>
+  <li>Open ClipHeist at {{SITE}} and go to <b>Settings, Connected apps</b>.</li>
+  <li>Press <b>Disconnect</b> next to the account. Its access token is deleted from ClipHeist straight away.</li>
+</ol>
+<p>You can also remove ClipHeist inside Facebook, Instagram, TikTok or Google (their <i>Apps and websites</i> or security settings). When you do that from Facebook or Instagram, Meta tells ClipHeist and the connected Instagram account is deleted from ClipHeist automatically.</p>
+<h2>Delete your videos, clips and account</h2>
+<ul>
+  <li>Delete any video, with its clips, from <b>All videos</b>.</li>
+  <li>To delete your whole account and everything in it, open <b>Settings, Security</b> and press <b>Delete my account</b>, or contact {{CONTACT}}.</li>
+</ul>
+<h2>If you asked Meta to delete your data</h2>
+<p>If you used Facebook's data deletion request for ClipHeist, the connected Instagram accounts have already been removed, and you can check this under <b>Settings, Connected apps</b>. Questions: {{CONTACT}}.</p>
 </article>
 
 <!-- ============================================================ ACCEPTABLE USE -->
@@ -221,14 +241,14 @@ article{animation:legalin .35s ease both}
       <a class="fcta" href="/signup">Sign up</a></div>
     <div><h4>Product</h4><ul><li><a href="/#how">How it works</a></li><li><a href="/#features">Features</a></li><li><a href="/#live">Live clipping</a></li><li><a href="/#open">Open source</a></li><li><a href="/#faq">FAQ</a></li></ul></div>
     <div><h4>Get started</h4><ul><li><a href="/signup">Create an account</a></li><li><a href="/login">Sign in</a></li><li><a href="/reset">Reset password</a></li></ul></div>
-    <div><h4>Legal</h4><ul><li><a href="/terms">Terms of Service</a></li><li><a href="/privacy">Privacy Policy</a></li><li><a href="/acceptable-use">Acceptable Use</a></li></ul></div>
+    <div><h4>Legal</h4><ul><li><a href="/terms">Terms of Service</a></li><li><a href="/privacy">Privacy Policy</a></li><li><a href="/acceptable-use">Acceptable Use</a></li><li><a href="/data-deletion">Data deletion</a></li></ul></div>
   </div>
   <div class="fbottom"><span>© <span class="fy"></span> ClipHeist</span><span>Free and open source.</span></div>
 </div></footer>
 <script>document.querySelectorAll(".fy").forEach(e => e.textContent = new Date().getFullYear());</script>
 <script>
-// switch between the three pages in place: a short fade, the address and title follow
-const TITLES = {terms: "Terms of Service", privacy: "Privacy Policy", "acceptable-use": "Acceptable Use Policy"};
+// switch between the four pages in place: a short fade, the address and title follow
+const TITLES = {terms: "Terms of Service", privacy: "Privacy Policy", "acceptable-use": "Acceptable Use Policy", "data-deletion": "Data deletion"};
 function showLegal(page, push) {
   if (!TITLES[page]) return false;
   document.body.dataset.page = page;

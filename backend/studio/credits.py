@@ -38,8 +38,10 @@ def _user(uid=None):
 
 def profile(uid=None, fresh=False) -> dict:
     """{plan, clips_total, clips_used, left, watermark, unlimited}"""
+    if not enabled():
+        return {"plan": "local", "left": 9999, "watermark": False, "unlimited": True}
     u = _user(uid)
-    if not enabled() or not u or u.is_admin:
+    if not u or u.is_admin:
         return {"plan": "admin" if u and u.is_admin else "local", "left": 9999, "watermark": False, "unlimited": True}
     hit = _cache.get(u.email)
     if fresh or not hit or time.time() - hit[0] > 20:
@@ -52,8 +54,27 @@ def profile(uid=None, fresh=False) -> dict:
     return p
 
 
+def on_clip(job, clip):
+    """A live recording's clip is ready: one clip off the balance, there and then (a recording has no end to wait
+    for). When that was the last clip, the recording is stopped, so nothing more is made that can't be paid for."""
+    if job.get("kind") != "live" or not enabled():
+        return
+    try:
+        spend(job["user"], 1)
+        job["charged"] = int(job.get("charged") or 0) + 1
+        p = profile(job["user"], fresh=True)
+        if not p.get("unlimited") and p["left"] <= 0:
+            from . import live
+            s = live.SESSIONS.get(job["id"])
+            if s and not s.ended and not s.user_stopped:
+                s.stop("Stopped: you're out of clips. Get more at clipheist.site/pricing.")
+    except Exception:  # noqa: BLE001 - never lose a clip over a billing hiccup
+        import traceback
+        traceback.print_exc()
+
+
 def spend(uid: str, n: int):
-    """Take n clips off the user's balance (called once per finished video)."""
+    """Take n clips off the user's balance (once per finished video; once per clip of a live recording)."""
     if n <= 0:
         return
     u = _user(uid)

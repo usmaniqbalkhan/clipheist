@@ -52,9 +52,73 @@ def _read_secret(var: str, file_var: str, pattern: str) -> str:
 
 
 # ---------------------------------------------------------------- where things live
-DATA_DIR = Path(env("PEAKCUT_DATA") or ROOT / "data")
+# Everything PeakCut keeps is in one folder. Which one: PEAKCUT_DATA in .env if it is set; otherwise the folder the
+# owner chose in Settings, Storage (kept in storage.json); otherwise "data" inside PeakCut's own folder.
+STORAGE_FILE = Path(env("PEAKCUT_STORAGE_FILE") or ROOT / "storage.json")
 # The app pages the server shows. In the repo they live in ../peakcut-ui; the Docker image copies them to /app/web.
 WEB_DIR = Path(env("PEAKCUT_WEB_DIR") or ROOT.parent / "peakcut-ui")
+
+
+def _move_folder(old: Path, new: Path) -> bool:
+    """Move everything from the old folder into the new one. Done at start, before anything is open. True when
+    nothing is left behind; anything that could not be moved stays where it was and is tried again next start."""
+    import shutil
+    if not old.is_dir() or old.resolve() == new.resolve():
+        return True
+    items = list(old.iterdir())
+    if items:
+        print(f"\n  Moving ClipHeist's folder to {new} ({len(items)} things). This is done once and can take a while...", flush=True)
+    done = True
+    for item in items:
+        target = new / item.name
+        try:
+            if target.exists() and item.is_dir():
+                for sub in item.iterdir():           # the folder is already there (made empty, or half moved): fill it
+                    if not (target / sub.name).exists():
+                        shutil.move(str(sub), str(target / sub.name))
+                if not any(item.iterdir()):
+                    item.rmdir()
+                else:
+                    done = False
+            elif not target.exists():
+                shutil.move(str(item), str(target))
+            else:
+                done = False
+        except OSError as e:
+            print(f"  Could not move {item.name}: {e}", flush=True)
+            done = False
+    if done:
+        try:
+            old.rmdir()
+        except OSError:
+            pass
+        print("  Moved.\n", flush=True)
+    return done
+
+
+def _data_folder():
+    if env("PEAKCUT_DATA"):
+        return Path(env("PEAKCUT_DATA")), "env"
+    try:
+        chosen = json.loads(STORAGE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        chosen = {}
+    if not chosen.get("path"):
+        return ROOT / "data", "default"
+    new = Path(chosen["path"])
+    try:
+        new.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise SystemExit(f"\n  ClipHeist's folder is set to {new}, and that can't be reached right now.\n"
+                         f"  Connect that drive and start ClipHeist again, or delete {STORAGE_FILE} to go back to the\n"
+                         f"  folder inside ClipHeist (your videos and clips stay where they are).\n")
+    if chosen.get("move_from"):
+        if _move_folder(Path(chosen["move_from"]), new):
+            STORAGE_FILE.write_text(json.dumps({"path": str(new)}, indent=1), encoding="utf-8")
+    return new, "chosen"
+
+
+DATA_DIR, DATA_FROM = _data_folder()
 USERS_DIR = DATA_DIR / "users"          # users/<user id>/{creators,jobs,accounts}
 MODELS_DIR = Path(env("PEAKCUT_MODELS") or DATA_DIR / "models")
 TMP_DIR = DATA_DIR / "tmp"
@@ -66,10 +130,36 @@ YT_TRANSCRIPT = env("PEAKCUT_YT_TRANSCRIPT", "1") != "0"
 # 1, the default, transcribes everything). Faster, but on talk-heavy streams loudness misses many good moments:
 # on an 82-min roleplay stream, 0.4 kept only 5 of 12 known good moments and dropped the best one.
 SCAN_SHARE = min(1.0, max(0.1, float(env("PEAKCUT_SCAN_SHARE", "1") or 1)))
+# YouTube often refuses servers in data centres ("sign in to confirm you're not a bot"). Cookies from a signed-in
+# YouTube account get past that: an admin pastes them under Settings, Connected apps, and they are kept in this file.
+YT_COOKIES = Path(env("PEAKCUT_YT_COOKIES") or DATA_DIR / "youtube-cookies.txt")
+# Optional: other addresses YouTube can be reached through when it refuses this machine (proxies you run yourself,
+# comma separated, like http://10.0.0.4:8888). Tried in order after this machine's own ways. Empty: none.
+YT_PROXIES = [p.strip() for p in env("PEAKCUT_YT_PROXIES", "").split(",") if p.strip()]
 # the compact model for processors; a machine with a graphics card sets PEAKCUT_ASR_MODEL to the full-precision one
 ASR_MODEL_NAME = env("PEAKCUT_ASR_MODEL", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 ASR_MODEL_DIR = MODELS_DIR / ASR_MODEL_NAME
+# Arabic: NVIDIA's FastConformer, converted for PeakCut with tools/export_arabic_model.py. Downloaded only when asked for.
+ASR_MODEL_AR = env("PEAKCUT_ASR_MODEL_AR", "sherpa-onnx-nemo-fastconformer-ar-int8")
+# The address names one fixed version of the file (a commit), not "the latest", and the file's fingerprint (SHA-256)
+# is checked before it is unpacked, so what is downloaded can't change unless this code changes. A mirror set with
+# PEAKCUT_ASR_MODEL_AR_URL must hold the very same file; a different model needs its own PEAKCUT_ASR_MODEL_AR_SHA256.
+ASR_MODEL_AR_URL = env("PEAKCUT_ASR_MODEL_AR_URL") or (
+    "https://huggingface.co/madwezza/peakcut-arabic-speech/resolve/"
+    f"3ae1fba562d68ce5299ea32659e5973cf464e034/{ASR_MODEL_AR}.tar.bz2")
+ASR_MODEL_AR_SHA256 = (env("PEAKCUT_ASR_MODEL_AR_SHA256")
+                       or "033ac7d886b3a4f04f66f3b8959456d7f4aa28ad4dae9da96a9cc716448efff9").strip().lower()
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
+# Commercials and "be right back" screens are stitched into streams. A clip taken from one is worthless, so those
+# seconds can be found and left out. It is off by default: it reads the whole video once, which is not free, and
+# a video that is meant to be still must not lose its clips. PEAKCUT_SKIP_STATIC=1 turns it on.
+# The threshold is the mean luma difference between frames: under it, nothing moved.
+SKIP_STATIC = env("PEAKCUT_SKIP_STATIC", "0") == "1"
+STATIC_THRESHOLD = float(env("PEAKCUT_STATIC_THRESHOLD", "0.4"))
+STATIC_MIN_SECONDS = float(env("PEAKCUT_STATIC_MIN_SECONDS", "6"))
+# How long one AI answer may take on a live stream. It is short on purpose: while the AI thinks, the
+# recording carries on, so a slow answer costs a check, not the stream.
+LIVE_AI_TIMEOUT = float(env("PEAKCUT_LIVE_AI_TIMEOUT", "45"))
 
 for d in (USERS_DIR, MODELS_DIR, TMP_DIR, FONTS_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -116,10 +206,21 @@ JOB_WORKERS = int(env("PEAKCUT_JOB_WORKERS") or max(2, os.cpu_count() or 4))
 MAX_ACTIVE_JOBS_PER_USER = int(_limit("PEAKCUT_MAX_JOBS_PER_USER", "5"))    # videos sent and worked on at once
 MAX_LIVE_TOTAL = int(env("PEAKCUT_MAX_LIVE") or max(4, 2 * (os.cpu_count() or 4)))   # ceiling; real load decides below it
 MAX_LIVE_PER_USER = int(_limit("PEAKCUT_MAX_LIVE_PER_USER"))     # streams one person records at once
+# live clips are made by this many workers at once (one for everybody let clips wait past the buffer)
+LIVE_RENDER_WORKERS = int(env("PEAKCUT_LIVE_RENDER_WORKERS") or max(2, min(4, (os.cpu_count() or 4) // 4)))
 MAX_VIDEO_HOURS = _limit("PEAKCUT_MAX_VIDEO_HOURS")              # longest video (or chosen part of one) that is processed
 MAX_LIVE_HOURS = _limit("PEAKCUT_MAX_LIVE_HOURS")                # a recording stops by itself after this long
 MAX_USER_GB = _limit("PEAKCUT_MAX_USER_GB")                      # disk space one account may fill
 MAX_CREATORS = int(_limit("PEAKCUT_MAX_CREATORS"))               # creators one account may add
+# 1 on a server with the recorder service (docker-compose.yml): live recordings run there and survive app updates
+RECORDER = env("PEAKCUT_RECORDER", "0") == "1"
+# Whole videos and stream recordings are kept after their clips are made (as before). On a server short of disk,
+# PEAKCUT_KEEP_SOURCE=0 deletes each whole video once its clips are made: only the clips stay (each with a few
+# seconds either side, so it can still be re-trimmed).
+KEEP_SOURCE = env("PEAKCUT_KEEP_SOURCE", "1") != "0"
+# Tidying, for a server short on disk. Off by default: nothing of yours is deleted or re-encoded without asking.
+# PEAKCUT_TIDY=1: whole videos are deleted once their clips are made, and kept stretches above 1080p are made smaller.
+TIDY = env("PEAKCUT_TIDY", "0") == "1"
 ALLOWED_SITES = tuple(s.strip().lower() for s in env(
     "PEAKCUT_ALLOWED_SITES", "youtube.com,youtu.be,twitch.tv,kick.com").split(",") if s.strip())
 
@@ -128,6 +229,13 @@ ALLOWED_SITES = tuple(s.strip().lower() for s in env(
 AI_PROVIDER = env("PEAKCUT_AI_PROVIDER", "deepseek" if env("DEEPSEEK_API_KEY", "") else "gemini").strip().lower()            # gemini, openai, xai, groq, openrouter, anthropic, ollama, custom
 AI_MODELS = [m.strip() for m in env("PEAKCUT_AI_MODELS", "deepseek-chat" if AI_PROVIDER == "deepseek" else "").split(",") if m.strip()]   # tried in this order
 AI_BASE_URL = env("PEAKCUT_AI_BASE_URL", "").rstrip("/")                      # only for "custom", or to override a provider's address
+# Listening: once a clip is decided, the AI hears just that stretch of audio to set the exact cut and write the
+# captions. Only with Gemini (the others can't take audio); with any other provider it is skipped. 0 turns it off.
+LISTEN = env("PEAKCUT_LISTEN", "1") == "1"
+# Emoji on clip headings are drawn from this folder of pictures (one PNG per emoji, named by its code points, like
+# 1f62d.png): Microsoft's Fluent Emoji 3D (MIT licence, studio/emoji/LICENSE), shipped with the code so every
+# machine draws the same ones. An emoji missing from it is drawn from the machine's emoji font.
+EMOJI_DIR = env("PEAKCUT_EMOJI_DIR", "") or str(ROOT / "studio" / "emoji")
 
 
 def ai_key() -> str:
@@ -145,7 +253,7 @@ SMTP_PORT = int(env("PEAKCUT_SMTP_PORT", "587"))
 SMTP_USER = env("PEAKCUT_SMTP_USER", "")
 MAIL_FROM = env("PEAKCUT_MAIL_FROM", "")
 CONTACT_EMAIL = env("PEAKCUT_CONTACT_EMAIL", "")
-LEGAL_NAME = env("PEAKCUT_LEGAL_NAME", "")            # the business that runs PeakCut, for the legal pages
+LEGAL_NAME = env("PEAKCUT_LEGAL_NAME", "")            # the business that runs ClipHeist, for the legal pages
 LEGAL_COUNTRY = env("PEAKCUT_LEGAL_COUNTRY", "")      # whose law applies, for the terms
 # Set to 1 on a public site with email set up: password sign-ups must then confirm their address before clipping.
 VERIFY_EMAIL = env("PEAKCUT_VERIFY_EMAIL", "0") == "1"
@@ -178,3 +286,14 @@ def _read_google_client() -> tuple:
 # ---------------------------------------------------------------- video
 MAX_SOURCE_HEIGHT = 1080
 OUT_W, OUT_H, OUT_FPS = 1080, 1920, 30
+
+
+# The release people are told about: the What's new pop-up (web/index.html WN_VER is the same string), the bell
+# notice every account gets once, and the "new version" note an open page shows when it is older than this.
+RELEASE = "2026-11-25"
+RELEASE_NOTICE = env("PEAKCUT_RELEASE_NOTICE", "1") == "1"
+
+# https served by PeakCut itself, without a web server in front: both files set, and the site answers on https.
+# Meta only sends people back to https addresses after they connect Instagram. Leave empty for plain http.
+SSL_CERT = env("PEAKCUT_SSL_CERT", "")
+SSL_KEY = env("PEAKCUT_SSL_KEY", "")

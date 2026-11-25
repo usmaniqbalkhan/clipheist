@@ -15,10 +15,11 @@ HERE = Path(__file__).resolve().parent.parent
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("ffmpeg", "ca-certificates", "curl", "unzip")
+    .apt_install("ffmpeg", "ca-certificates", "curl", "unzip",
+                 "fonts-noto-core", "fonts-noto-cjk", "fonts-noto-color-emoji")   # the same fonts as backend/Dockerfile
     .run_commands("curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y")
     .pip_install("numpy==2.4.6", "fastapi==0.165.0", "uvicorn==0.54.0", "soundfile==0.14.0", "httpx==0.28.1",
-                 "yt-dlp==2026.11.23", "pillow==13.0.0")
+                 "yt-dlp[default]==2026.11.23", "pillow==13.0.0")
     .env({"PEAKCUT_DATA": "/data"})
     .add_local_dir(HERE / "studio", "/root/studio", copy=True, ignore=["__pycache__", "*.pyc"])
 )

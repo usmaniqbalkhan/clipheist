@@ -89,8 +89,44 @@ label.f{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--di
 .tile span{font-size:13px;color:var(--dim);margin-top:2px}
 .tile small{font-size:12px;color:var(--faint);margin-top:8px}
 .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.sect{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin:4px 0 10px}
+.tile.now{padding:14px 16px;position:relative}
+.tile.now b{font-size:24px}
+.tile.now small{margin-top:4px}
+.tile.now.hot{border-color:var(--brand-line);background:var(--brand-soft)}
+.nowdot{width:8px;height:8px;border-radius:50%;background:var(--good);display:inline-block;animation:nowp 1.4s ease-in-out infinite}
+.tile.now .nowdot{position:absolute;right:14px;top:14px;background:var(--brand)}
+@keyframes nowp{50%{opacity:.3}}
+@media (max-width:900px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .split>.card{margin-bottom:16px;min-width:0}
 
+/* column chart: plain elements, so text never stretches; round-number axis; a tip for every day */
+.cc{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px}
+.cc-y{position:relative;height:200px;min-width:34px}
+.cc-y span{position:absolute;right:0;transform:translateY(50%);font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cc-plot{position:relative;height:200px}
+.cc-grid{position:absolute;left:0;right:0;border-top:1px solid var(--line)}
+.cc-grid.base{border-top-color:var(--line-2)}
+.cc-cols{position:absolute;inset:0;display:flex;align-items:stretch;gap:3px}
+.cc-col{position:relative;flex:1;min-width:0;display:flex;align-items:flex-end;border-radius:4px;outline:0}
+.cc-col:hover,.cc-col:focus{background:var(--muted)}
+.cc-stack{width:100%;max-width:26px;margin:0 auto;height:100%;display:flex;flex-direction:column-reverse;gap:2px}
+.cc-stack i{display:block;width:100%;border-radius:4px 4px 0 0;min-height:0}
+.cc-stack i+i{border-radius:4px 4px 0 0}
+.cc-stack i.s1{background:var(--brand)}
+.cc-stack i.s2{background:var(--brand-ink)}
+.cc-tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:3;min-width:150px;padding:9px 11px;border-radius:8px;background:var(--frame);color:var(--frame-text);font-size:12px;line-height:1.5;pointer-events:none;white-space:nowrap}
+.cc-col.r .cc-tip{left:auto;right:0;transform:none}
+.cc-col.l .cc-tip{left:0;transform:none}
+.cc-col:hover .cc-tip,.cc-col:focus .cc-tip{display:block}
+.cc-tip b{display:block;font-weight:600;margin-bottom:2px}
+.cc-tip span{display:flex;justify-content:space-between;gap:14px;color:var(--frame-dim)}
+.cc-tip span em{font-style:normal;color:var(--frame-text);font-variant-numeric:tabular-nums}
+.cc-tip i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;background:var(--brand)}
+.cc-tip i.k2{background:#C9B8AD}
+.cc-x{grid-column:2;position:relative;height:22px;margin-top:6px}
+.cc-x span{position:absolute;transform:translateX(-50%);font-size:11.5px;color:var(--faint);white-space:nowrap}
+.cc-none{position:absolute;inset:0;display:grid;place-items:center;font-size:13px;color:var(--dim)}
 .chart{width:100%;height:auto;display:block}
 .chart .gl{stroke:var(--line);stroke-width:1}
 .chart text{font:11px "Geist","Segoe UI",sans-serif;fill:var(--faint)}
@@ -157,8 +193,13 @@ dialog::backdrop{background:rgba(14,12,11,.42)}
 .fbitem{padding:16px 18px}
 .fbtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .fbtop b{color:var(--brand-ink)}
+.pill svg{width:14px;height:14px;fill:currentColor}
+.fbacts .end{margin-left:auto}
+.toolbar .end{margin-left:auto}
+.fbnote{font-size:13px;color:var(--dim);margin:-6px 0 14px}
 .fbmsg{white-space:pre-wrap;color:var(--text);line-height:1.6;margin:0 0 10px}
 .fbctx{font-size:12px;color:var(--dim);background:var(--muted);border-radius:8px;padding:8px 10px;margin:0 0 12px;overflow-wrap:anywhere}
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 0 4px}
 </style>
 </head>
 <body>
@@ -201,7 +242,7 @@ const kfmt = v => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? (v / 1e3).t
 const when = t => t ? new Date(t * 1000).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}) : "Never";
 const day = t => t ? new Date(t * 1000).toLocaleDateString([], {day:"numeric", month:"short", year:"numeric"}) : "Never";
 const ago = t => { if (!t) return "Never"; const s = Date.now() / 1000 - t; return s < 300 ? "Now" : s < 3600 ? Math.floor(s / 60) + " min ago" : s < 86400 ? Math.floor(s / 3600) + " h ago" : s < 30 * 86400 ? Math.floor(s / 86400) + " d ago" : day(t); };
-const ACTION = {disable:"Disabled an account", enable:"Enabled an account", delete:"Deleted an account", "role:admin":"Made an admin", "role:user":"Removed admin"};
+const ACTION = {disable:"Disabled an account", enable:"Enabled an account", delete:"Deleted an account", "role:admin":"Made an admin", "role:user":"Removed admin", feedback:"Removed feedback"};
 
 async function api(path, opt) {
   const r = await fetch(path, opt);
@@ -215,7 +256,7 @@ function toast(msg, kind = "") {
   $("#toasts").append(t); setTimeout(() => t.remove(), kind === "bad" ? 7000 : 3200);
 }
 
-const S = {tab:"overview", data:null, me:null, q:"", filter:"all", sort:"created_at", fb:null, fbStatus:"new"};
+const S = {tab:"overview", data:null, me:null, q:"", filter:"all", sort:"created_at", fb:null, fbStatus:"open", fbFresh:new Set()};
 const TABS = {overview:["Overview", "home", "Sign-ups, videos and AI use across this ClipHeist server."],
               users:["Users", "users", "Every account. Open one to see how much it uses the AI."],
               feedback:["Feedback", "chat", "Bug reports, feature ideas and other messages from users."],
@@ -224,20 +265,37 @@ const pathFor = t => "/admin" + (t === "overview" ? "" : "/" + t);
 const fromPath = () => { const k = location.pathname.replace(/\/$/, "").split("/")[2]; return TABS[k] ? k : "overview"; };
 
 /* ---------- charts */
-function bars(rows, a, fmt, label) {
-  const W = 640, H = 190, pl = 44, pt = 10, pb = 22, cw = W - pl, ch = H - pt - pb;
-  const max = Math.max(...rows.map(r => r[a] || 0), 0);
-  const top = max || 1, step = cw / rows.length, bw = Math.max(3, step - 4);
-  let g = "";
-  for (let i = 0; i <= 2; i++) { const y = pt + ch - ch * i / 2;
-    g += `<line class="gl" x1="${pl}" x2="${W}" y1="${y}" y2="${y}"/><text x="${pl - 8}" y="${y + 4}" text-anchor="end">${esc(fmt(top * i / 2))}</text>`; }
-  rows.forEach((r, i) => {
-    const x = pl + i * step + (step - bw) / 2, h1 = ch * (r[a] || 0) / top;
-    if (h1 > 0) g += `<rect class="b1" x="${x}" y="${pt + ch - h1}" width="${bw}" height="${h1}" rx="2"><title>${esc(`${r.day}: ${fmt(r[a] || 0)}`)}</title></rect>`;
-    if (i % 5 === 0 || i === rows.length - 1) g += `<text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(r.day.slice(8) + "/" + r.day.slice(5, 7))}</text>`;
-  });
-  const none = max ? "" : `<text class="none" x="${(W + pl) / 2}" y="${pt + ch / 2}" text-anchor="middle">Nothing in the last 30 days</text>`;
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}${none}</svg>`;
+// a round step for the axis (1, 2 or 5 x a power of ten) and the top it reaches, so labels read 0, 20, 40, 60
+function niceAxis(max, whole) {
+  if (!(max > 0)) return {top: whole ? 4 : 1, step: whole ? 1 : .25};
+  const raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  let step = [1, 2, 5, 10].map(m => m * p).find(v => v >= raw);
+  if (whole) step = Math.max(1, Math.round(step));
+  return {top: Math.ceil(max / step - 1e-9) * step, step};
+}
+const axisFmt = (fmt, v) => fmt(v);
+const shortDay = d => new Date(d + "T12:00:00").toLocaleDateString([], {month: "short", day: "numeric"});
+// rows: one per day; a (and b, stacked on top) are the series; names label them in the tip; extra adds lines to the tip
+function bars(rows, a, b, fmt, label, names = [], extra = null) {
+  const max = Math.max(0, ...rows.map(r => (r[a] || 0) + (b ? r[b] || 0 : 0)));
+  const ax = niceAxis(max, true), top = ax.top;
+  const ticks = Array.from({length: Math.round(top / ax.step) + 1}, (_, i) => i * ax.step / top);
+  const yl = ticks.map(f => `<span style="bottom:${f * 100}%">${esc(axisFmt(fmt, top * f))}</span>`).join("");
+  const grid = ticks.map(f => `<div class="cc-grid${f ? "" : " base"}" style="bottom:${f * 100}%"></div>`).join("");
+  const n = rows.length;
+  const cols = rows.map((r, i) => {
+    const v1 = r[a] || 0, v2 = b ? r[b] || 0 : 0;
+    const tip = `<b>${esc(shortDay(r.day))}</b><span><i></i>${esc(names[0] || "Total")}<em>${esc(fmt(v1))}</em></span>`
+      + (b ? `<span><i class="k2"></i>${esc(names[1] || "")}<em>${esc(fmt(v2))}</em></span>` : "") + (extra ? extra(r) : "");
+    return `<div class="cc-col${i < 4 ? " l" : i > n - 5 ? " r" : ""}" tabindex="0" aria-label="${esc(shortDay(r.day))}: ${esc(fmt(v1 + v2))}">
+      <div class="cc-stack">${v1 ? `<i class="s1" style="height:${(v1 / top * 100).toFixed(2)}%"></i>` : ""}${v2 ? `<i class="s2" style="height:${(v2 / top * 100).toFixed(2)}%"></i>` : ""}</div>
+      <div class="cc-tip">${tip}</div></div>`;
+  }).join("");
+  const xl = rows.map((r, i) => (i % 5 === 0 || i === n - 1) && !(i !== n - 1 && n - 1 - i < 3)
+    ? `<span style="left:${((i + .5) / n * 100).toFixed(2)}%">${esc(shortDay(r.day))}</span>` : "").join("");
+  return `<div class="cc" role="img" aria-label="${esc(label)}"><div class="cc-y">${yl}</div>
+    <div class="cc-plot">${grid}<div class="cc-cols">${cols}</div>${max ? "" : `<div class="cc-none">Nothing in the last 30 days</div>`}</div>
+    <div class="cc-x">${xl}</div></div>`;
 }
 function hbars(rows, fmt) {
   const total = rows.reduce((s, r) => s + r[1], 0) || 1;
@@ -250,7 +308,22 @@ const tile = (icon, big, label, small = "") => `<div class="tile"><i>${ic(icon)}
 function drawOverview(a) {
   const t = a.totals, sv = a.server, ok = (v, l) => `<span class="pill ${v ? "ok" : "bad"}">${esc(l)}</span>`;
   const ai = sv.ai_key ? `AI: ${[sv.ai_provider, sv.ai_model].filter(Boolean).join(", ") || "ready"}` : "No AI key";
-  return `<div class="tiles">
+  const n = a.now || {}, ld = sv.load || {};
+  const live = (big, label, small, hot) => `<div class="tile now${hot ? " hot" : ""}">${hot ? `<span class="nowdot"></span>` : ""}<b>${esc(big)}</b><span>${esc(label)}</span>${small ? `<small>${esc(small)}</small>` : ""}</div>`;
+  return `<h3 class="sect"><span class="nowdot"></span>Right now</h3>
+    <div class="tiles now-tiles">
+      ${live(num(n.videos_running), "Videos being made", `${num(n.videos_waiting)} waiting in line`, n.videos_running > 0)}
+      ${live(num(n.clips_making), "Clips being made", "Rendering or waiting to render", n.clips_making > 0)}
+      ${live(num(n.live), "Live recordings", n.live ? `by ${num(n.live_people)} ${n.live_people === 1 ? "person" : "people"}` : "None right now", n.live > 0)}
+    </div>
+    <div class="tiles now-tiles">
+      ${live(`${sv.free_gb} GB`, "Free disk space", sv.free_gb < 15 ? "Low: new uploads stop when the drive is almost full" : "Room for new videos")}
+      ${live(`${ld.cpu ?? "–"}%`, "Processor in use", ld.busy ? "Near full: new videos are queueing" : "Has room")}
+      ${live(`${ld.ram_free_gb ?? "–"} GB`, "Memory free", "")}
+      <div class="tile now"><b style="font-size:15px;letter-spacing:0">Services</b><div class="row" style="margin-top:8px">${ok(sv.ai_key, ai)}${ok(sv.speech_model, "Transcription")}${Object.entries(sv.speech_more || {}).map(([k, y]) => ok(y, k + " speech")).join("")}${ok(sv.google, "Google sign-in")}</div></div>
+    </div>
+    <h3 class="sect">All time</h3>
+    <div class="tiles">
       ${tile("users", num(t.users), "Accounts in total", `${num(t.verified)} confirmed their email, ${num(t.disabled)} disabled`)}
       ${tile("plus", num(t.signups_7d), "Signed up, last 7 days", `${num(t.signups_today)} today, ${num(t.signups_30d)} in 30 days`)}
       ${tile("clock", num(t.active_7d), "Active, last 7 days", `${num(t.admins)} admin${t.admins === 1 ? "" : "s"}`)}
@@ -262,33 +335,36 @@ function drawOverview(a) {
       ${tile("clock", num(t.working), "Videos in progress", `${num(sv.running)} running, ${num(sv.waiting)} waiting`)}
     </div>
     <div class="split">
-      <div class="card"><div class="card-head"><div><h2>Sign-ups</h2><p class="sub">New accounts per day, last 30 days</p></div></div>${bars(a.daily, "signups", v => String(Math.round(v)), "New accounts per day")}</div>
-      <div class="card"><div class="card-head"><div><h2>AI usage</h2><p class="sub">Tokens used per day, last 30 days</p></div></div>${bars(a.daily, "tokens", v => kfmt(Math.round(v)), "AI tokens used per day")}</div>
+      <div class="card"><div class="card-head"><div><h2>Sign-ups</h2><p class="sub">New accounts per day, last 30 days</p></div></div>${bars(a.daily, "signups", null, v => String(Math.round(v)), "New accounts per day", ["Sign-ups"])}</div>
+      <div class="card"><div class="card-head"><div><h2>AI usage</h2><p class="sub">Tokens used per day, last 30 days</p></div></div>${bars(a.daily, "tokens", null, v => kfmt(Math.round(v)), "AI tokens used per day", ["Tokens"])}</div>
     </div>
     <div class="split">
-      <div class="card"><div class="card-head"><div><h2>AI calls</h2><p class="sub">Per day, last 30 days</p></div></div>${bars(a.daily, "calls", v => String(Math.round(v)), "AI calls per day")}</div>
+      <div class="card"><div class="card-head"><div><h2>AI calls</h2><p class="sub">Per day, last 30 days</p></div></div>${bars(a.daily, "calls", null, v => String(Math.round(v)), "AI calls per day", ["AI calls"])}</div>
       <div class="card"><div class="card-head"><div><h2>What the AI is used for</h2><p class="sub">All users, all time</p></div></div>${hbars(a.by_purpose, r => `${num(r[1])} call${r[1] === 1 ? "" : "s"} · ${kfmt(r[2])} tokens`)}</div>
     </div>
-    <div class="card"><div class="card-head"><div><h2>Right now</h2><p class="sub">${num(t.recording)} recording, ${num(t.working)} video${t.working === 1 ? "" : "s"} in progress</p></div>
-      <div class="row">${ok(sv.ai_key, ai)}${ok(sv.speech_model, "Transcription")}${ok(sv.google, "Google sign-in")}${ok(sv.mail, "Email")}<span class="pill">${esc(sv.database)}</span><span class="pill">${esc(sv.free_gb)} GB free</span>${sv.load ? `<span class="pill ${sv.load.busy ? "warn" : "ok"}">${sv.load.busy ? "Near full: new videos are queueing" : "Has room"}</span><span class="pill">Processor ${esc(sv.load.cpu)}%</span><span class="pill">${esc(sv.load.ram_free_gb)} GB memory free</span><span class="pill">${esc(sv.running)} running, ${esc(sv.waiting)} waiting</span>` : ""}</div>
-      ${sv.ai_key ? "" : `<p class="note" style="margin-top:14px">No AI key is set, so clips are picked by loudness only. Add your own key to the .env file on the server (see .env.example) and restart.</p>`}</div>`;
+      ${sv.ai_key ? "" : `<p class="note">No AI key is set, so clips are picked by loudness only. Add your own key in the app under Settings, AI, or in the .env file on the server (see .env.example).</p>`}`;
 }
 
-function userRows(a) {
-  const q = S.q.trim().toLowerCase();
-  let rows = a.users.filter(u => !q || u.email.toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q));
-  if (S.filter === "unconfirmed") rows = rows.filter(u => !u.verified);
-  if (S.filter === "disabled") rows = rows.filter(u => u.disabled);
-  if (S.filter === "admins") rows = rows.filter(u => u.role === "admin");
-  return rows.sort((x, y) => (y[S.sort] || 0) - (x[S.sort] || 0));
+/* The accounts are searched, filtered and sorted on the server, across every account, 50 to a page. */
+let usersSeq = 0;
+async function loadUsers() {
+  const seq = ++usersSeq;
+  const p = new URLSearchParams({q: S.q, show: S.filter, sort: S.sort, page: S.upage || 1});
+  try { const got = await api("/api/admin/users?" + p); if (seq === usersSeq) { S.ul = got; S.upage = got.page; } }
+  catch (e) { if (seq === usersSeq) toast(e.message, "bad"); }
+  if (seq === usersSeq && S.tab === "users") draw();
 }
+const shownUser = id => (S.ul?.users || []).find(x => x.id === id);
 function drawUsers(a) {
   const seg = (k, l) => `<button class="${S.filter === k ? "on" : ""}" data-act="filter" data-k="${k}">${l}</button>`;
   const th = (k, l) => `<th class="num"><button data-act="sort" data-k="${k}" style="all:unset;cursor:pointer;color:${S.sort === k ? "var(--brand-deep)" : "inherit"}">${l}</button></th>`;
-  const rows = userRows(a);
+  if (!S.ul) { if (!S.ulLoading) { S.ulLoading = true; loadUsers().finally(() => S.ulLoading = false); } return `<div class="empty"><b>Loading accounts…</b></div>`; }
+  const L = S.ul, rows = L.users;
+  const pager = L.pages > 1 ? `<div class="pager"><button class="btn sm" data-act="upage" data-p="${L.page - 1}" ${L.page <= 1 ? "disabled" : ""}>Previous</button>
+      <span class="sub">Page ${num(L.page)} of ${num(L.pages)}</span><button class="btn sm" data-act="upage" data-p="${L.page + 1}" ${L.page >= L.pages ? "disabled" : ""}>Next</button></div>` : "";
   return `<div class="toolbar"><input type="search" id="q" placeholder="Search by name or email" value="${esc(S.q)}" aria-label="Search accounts">
-      <div class="seg">${seg("all", "All")}${seg("unconfirmed", "Email not confirmed")}${seg("disabled", "Disabled")}${seg("admins", "Admins")}</div>
-      <span class="sub">${num(rows.length)} of ${num(a.users.length)}</span></div>
+      <div class="seg">${seg("all", "All")}${seg("disabled", "Disabled")}${seg("admins", "Admins")}</div>
+      <span class="sub">${num(L.total)} of ${num(L.all)}</span></div>
     <div class="card"><div class="scroll"><table><tr><th>Account</th><th><button data-act="sort" data-k="created_at" style="all:unset;cursor:pointer;color:${S.sort === "created_at" ? "var(--brand-deep)" : "inherit"}">Joined</button></th>
       <th><button data-act="sort" data-k="last_seen" style="all:unset;cursor:pointer;color:${S.sort === "last_seen" ? "var(--brand-deep)" : "inherit"}">Last active</button></th>
       ${th("ai_calls", "AI calls")}${th("tokens", "AI tokens")}${th("videos", "Videos")}${th("clips", "Clips")}</tr>
@@ -298,7 +374,7 @@ function drawUsers(a) {
         <td class="sub">${esc(day(u.created_at))}</td><td class="sub">${esc(ago(u.last_seen))}</td>
         <td class="num">${num(u.ai_calls)}</td><td class="num">${esc(kfmt(u.tokens || 0))}</td>
         <td class="num">${num(u.videos)}</td><td class="num">${num(u.clips)}</td></tr>`).join("")
-        || `<tr><td colspan="7"><div class="empty"><b>No accounts match</b>Try another search or filter.</div></td></tr>`}</table></div></div>`;
+        || `<tr><td colspan="7"><div class="empty"><b>No accounts match</b>Try another search or filter.</div></td></tr>`}</table></div>${pager}</div>`;
 }
 
 function drawActivity(a) {
@@ -309,29 +385,39 @@ function drawActivity(a) {
       : `<div class="empty"><b>Nothing yet</b>Account changes made by admins are recorded here.</div>`}</div>`;
 }
 
-const FBK = {bug: ["Bug", "bad"], idea: ["Idea", "brand"], other: ["Message", ""]};
+const FBK = {bug: ["Bug", "bad"], idea: ["Idea", "warn"], other: ["Message", ""], rating: ["Rating", "brand"]};
+const fbOpen = f => f.counts.new + f.counts.seen;
 function drawFeedback() {
   const f = S.fb;
   if (!f) return `<div class="empty"><b>Loading…</b></div>`;
-  const seg = (k, l) => `<button class="${S.fbStatus === k ? "on" : ""}" data-act="fbfilter" data-k="${k}">${l}${k && f.counts[k] ? ` · ${num(f.counts[k])}` : ""}</button>`;
-  return `<div class="toolbar"><div class="seg">${seg("new", "New")}${seg("seen", "Seen")}${seg("done", "Done")}${seg("", "All")}</div></div>
-    ${f.items.length ? f.items.map(x => `<div class="card fbitem"><div class="fbtop"><span class="pill ${FBK[x.kind]?.[1] || ""}">${esc(FBK[x.kind]?.[0] || x.kind)}</span>
+  const seg = (k, l, n) => `<button class="${S.fbStatus === k ? "on" : ""}" data-act="fbfilter" data-k="${k}">${l}${n ? ` · ${num(n)}` : ""}</button>`;
+  const isNew = x => x.status === "new" || S.fbFresh.has(x.id);
+  const empty = {open: "Nothing is waiting. Every message has been dealt with or removed.", done: "Messages you mark as done are kept here.", "": "Messages appear here as users send them."}[S.fbStatus];
+  return `<div class="toolbar"><div class="seg">${seg("open", "Open", fbOpen(f))}${seg("done", "Done", f.counts.done)}${seg("", "All")}</div>
+      ${f.items.length ? `<button class="btn sm danger end" data-act="fbclear">Remove all ${num(f.items.length)}</button>` : ""}</div>
+    ${f.items.length ? f.items.map(x => `<div class="card fbitem"><div class="fbtop">
+        <span class="pill ${FBK[x.kind]?.[1] || ""}">${esc(FBK[x.kind]?.[0] || x.kind)}</span>
         <b>${esc(x.name || x.email || "Deleted account")}</b><span class="sub">${esc(x.email)} · ${esc(when(x.t))}${x.page ? " · " + esc(x.page) : ""}</span>
-        <span class="pill ${x.status === "done" ? "ok" : x.status === "new" ? "warn" : ""}" style="margin-left:auto">${esc(x.status === "new" ? "New" : x.status === "seen" ? "Seen" : "Done")}</span></div>
+        ${isNew(x) ? `<span class="pill warn" style="margin-left:auto">New</span>` : x.status === "done" ? `<span class="pill ok" style="margin-left:auto">Done</span>` : ""}</div>
       <p class="fbmsg">${esc(x.message)}</p>${x.context ? `<p class="fbctx">${esc(x.context)}</p>` : ""}
-      <div class="row">${x.status !== "seen" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="seen">Mark seen</button>` : ""}
-        ${x.status !== "done" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="done">${ic("check")}Done</button>` : `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="new">Reopen</button>`}
-        ${x.email ? `<a class="btn sm" href="mailto:${esc(x.email)}?subject=${encodeURIComponent("About your ClipHeist feedback")}">Reply by email</a>` : ""}</div></div>`).join("")
-      : `<div class="card"><div class="empty"><b>Nothing here</b>${S.fbStatus === "new" ? "No new messages. Everything has been looked at." : "Messages appear here as users send them."}</div></div>`}`;
+      <div class="row fbacts">${x.status !== "done" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="done">${ic("check")}Done</button>` : `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="seen">Reopen</button>`}
+        ${x.email ? `<a class="btn sm" href="mailto:${esc(x.email)}?subject=${encodeURIComponent("About your ClipHeist feedback")}">Reply by email</a>` : ""}
+        <button class="btn sm danger end" data-act="fbdrop" data-id="${x.id}">Remove</button></div></div>`).join("")
+      : `<div class="card"><div class="empty"><b>Nothing here</b>${empty}</div></div>`}`;
 }
 async function loadFeedback() {
-  try { S.fb = await api("/api/admin/feedback" + (S.fbStatus ? "?status=" + S.fbStatus : "")); } catch (e) { toast(e.message, "bad"); }
-  if (S.tab === "feedback") draw();
+  try { S.fb = await api("/api/admin/feedback?status=" + S.fbStatus); } catch (e) { return toast(e.message, "bad"); }
+  // Having a message on screen is what makes it seen: the count beside Feedback is only what arrived since the last look.
+  const fresh = S.tab === "feedback" && document.visibilityState === "visible" ? S.fb.items.filter(x => x.status === "new").map(x => x.id) : [];
+  if (fresh.length) {
+    try { await send("/api/admin/feedback/seen", {ids: fresh}); fresh.forEach(i => S.fbFresh.add(i)); S.fb.counts.new -= fresh.length; S.fb.counts.seen += fresh.length; S.fb.items.forEach(x => { if (x.status === "new") x.status = "seen"; }); } catch {}
+  }
+  draw();
 }
 function draw() {
   const a = S.data, [title, , sub] = TABS[S.tab];
   $("#nav").innerHTML = `<h4>Admin</h4>` + Object.entries(TABS).map(([k, [l, i]]) =>
-    `<a class="nav-item ${S.tab === k ? "on" : ""}" href="${pathFor(k)}" data-act="tab" data-k="${k}">${ic(i)}<span class="label">${l}</span>${k === "users" && a ? `<span class="count">${num(a.totals.users)}</span>` : ""}${k === "feedback" && S.fb?.counts.new ? `<span class="count">${num(S.fb.counts.new)}</span>` : ""}</a>`).join("");
+    `<a class="nav-item ${S.tab === k ? "on" : ""}" href="${pathFor(k)}" data-act="tab" data-k="${k}">${ic(i)}<span class="label">${l}</span>${k === "users" && a ? `<span class="count">${num(a.totals.users)}</span>` : ""}${k === "feedback" && S.fb?.counts.new ? `<span class="count" title="New since you last looked">${num(S.fb.counts.new)}</span>` : ""}</a>`).join("");
   $("#foot").innerHTML = (S.me ? `<div class="who"><b>${esc(S.me.name)}</b>${esc(S.me.email)}</div>` : "") +
     `<a class="nav-item" href="/app">${ic("arrowr")}<span class="label">Back to the app</span></a>
      <button class="nav-item" data-act="logout">${ic("signout")}<span class="label">Sign out</span></button>`;
@@ -348,18 +434,20 @@ async function load() {
   catch (e) { if (e.message !== "Not available") $("#view").innerHTML = `<div class="empty"><b>Couldn't load</b>${esc(e.message)}</div>`; }
 }
 function go(tab, push = true) {
+  if (tab !== S.tab) S.fbFresh.clear();
   S.tab = tab; if (push && location.pathname !== pathFor(tab)) history.pushState(null, "", pathFor(tab));
   if (tab === "feedback") loadFeedback();
   draw(); $("#main").scrollTo(0, 0);
 }
 addEventListener("popstate", () => go(fromPath(), false));
+document.addEventListener("visibilitychange", () => { if (S.tab === "feedback" && document.visibilityState === "visible" && !$("#dlg").open) loadFeedback(); });
 
 /* ---------- account dialogs */
 async function userDialog(id) {
   const d = $("#dlg");
   d.innerHTML = `<div class="dlg wide"><p class="help">Loading…</p></div>`; d.showModal();
   let u; try { u = await api(`/api/admin/users/${encodeURIComponent(id)}`); } catch (e) { d.close(); return toast(e.message, "bad"); }
-  const row = S.data.users.find(x => x.id === id) || {};
+  const row = shownUser(id) || {};
   d.innerHTML = `<div class="dlg wide"><div class="card-head" style="margin:0"><div><h2>${esc(u.name || u.email.split("@")[0])}
       ${u.role === "admin" ? ` <span class="pill brand">Admin</span>` : ""}${u.disabled ? ` <span class="pill bad">Disabled</span>` : ""}</h2><p class="sub">${esc(u.email)}</p></div>
       <div class="row">
@@ -385,35 +473,47 @@ function confirmDialog(title, text, okLabel, danger) {
   });
 }
 
-document.addEventListener("input", e => { if (e.target.id === "q") { S.q = e.target.value; draw(); } });
+let qTimer = null;
+document.addEventListener("input", e => { if (e.target.id === "q") { S.q = e.target.value; S.upage = 1; clearTimeout(qTimer); qTimer = setTimeout(loadUsers, 250); } });
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const a = b.dataset.act, d = b.dataset;
   try {
     if (a === "tab") { e.preventDefault(); return go(d.k); }
-    if (a === "refresh") { await load(); await loadFeedback(); return toast("Up to date", "ok"); }
+    if (a === "refresh") { await load(); await loadFeedback(); if (S.tab === "users") await loadUsers(); return toast("Up to date", "ok"); }
+    if (a === "upage") { S.upage = Number(d.p); await loadUsers(); return $("#main").scrollTo(0, 0); }
     if (a === "fbfilter") { S.fbStatus = d.k; return loadFeedback(); }
-    if (a === "fbset") { await send(`/api/admin/feedback/${d.id}`, {status: d.s}); toast(d.s === "done" ? "Marked done" : d.s === "seen" ? "Marked seen" : "Reopened", "ok"); return loadFeedback(); }
-    if (a === "filter") { S.filter = d.k; return draw(); }
-    if (a === "sort") { e.stopPropagation(); S.sort = d.k; return draw(); }
+    if (a === "fbset") { await send(`/api/admin/feedback/${d.id}`, {status: d.s}); toast(d.s === "done" ? "Marked done" : "Reopened", "ok"); return loadFeedback(); }
+    if (a === "fbdrop") {
+      if (!await confirmDialog("Remove this message?", "It is removed for good and can't be brought back.", "Remove", true)) return;
+      await send("/api/admin/feedback/remove", {ids: [Number(d.id)]}); toast("Message removed", "ok"); return loadFeedback();
+    }
+    if (a === "fbclear") {
+      const ids = S.fb.items.map(x => x.id);
+      if (!await confirmDialog(`Remove ${ids.length === 1 ? "this message" : `all ${num(ids.length)} messages`}?`,
+        `${ids.length === 1 ? "The message shown here is" : "The messages shown here are"} removed for good and can't be brought back.`, "Remove all", true)) return;
+      const r = await send("/api/admin/feedback/remove", {ids}); toast(`${num(r.removed)} removed`, "ok"); return loadFeedback();
+    }
+    if (a === "filter") { S.filter = d.k; S.upage = 1; return loadUsers(); }
+    if (a === "sort") { e.stopPropagation(); S.sort = d.k; S.upage = 1; return loadUsers(); }
     if (a === "closedlg") return $("#dlg").close();
     if (a === "user") return userDialog(d.id);
     if (a === "disable") {
-      const off = d.off === "1", u = S.data.users.find(x => x.id === d.id); if (!u) return;
+      const off = d.off === "1", u = shownUser(d.id); if (!u) return;
       $("#dlg").close();
       if (!await confirmDialog(off ? "Disable this account?" : "Enable this account?",
         off ? `${u.email} is signed out everywhere and cannot sign in until you enable the account again. Their data is kept.` : `${u.email} will be able to sign in again.`,
         off ? "Disable account" : "Enable account", off)) return;
       await send(`/api/admin/users/${encodeURIComponent(d.id)}/disabled`, {disabled:off});
-      toast(off ? "Account disabled" : "Account enabled", "ok"); return load();
+      toast(off ? "Account disabled" : "Account enabled", "ok"); await load(); return loadUsers();
     }
     if (a === "deluser") {
-      const u = S.data.users.find(x => x.id === d.id); if (!u) return;
+      const u = shownUser(d.id); if (!u) return;
       $("#dlg").close();
       const typed = prompt(`Delete ${u.email} and everything in the account for good?\n\nCreators, recordings, videos and clips are all removed. This cannot be undone.\n\nType the email address to confirm:`);
       if (!typed) return;
       await send(`/api/admin/users/${encodeURIComponent(d.id)}/delete`, {confirm: typed});
-      toast("Account deleted", "ok"); return load();
+      toast("Account deleted", "ok"); await load(); return loadUsers();
     }
     if (a === "logout") { await fetch("/api/auth/logout", {method:"POST"}); location.href = "/"; return; }
   } catch (err) { toast(err.message, "bad"); }
@@ -423,7 +523,8 @@ document.addEventListener("click", async e => {
   S.tab = fromPath(); draw();
   try { S.me = (await api("/api/auth/me")).user; } catch {}
   await load();
-  setInterval(() => { if (!$("#dlg").open && document.visibilityState === "visible") load(); }, 30000);
+  if (S.tab !== "feedback") loadFeedback();   // for the count beside Feedback
+  setInterval(() => { if (!$("#dlg").open && document.visibilityState === "visible") { load(); if (S.tab !== "feedback") loadFeedback(); } }, 30000);
 })();
 </script>
 </body>

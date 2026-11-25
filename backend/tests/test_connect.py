@@ -49,6 +49,27 @@ check("each platform shows the address to register", apps["tiktok"]["redirect"],
 r = a.put("/api/apps", json={"platform": "tiktok", "client_id": "", "client_secret": "tiktok-secret-value2"}, headers=ORIGIN)
 check("a new secret alone keeps the saved id", accounts.app_keys("tiktok"), ("awtiktokkey123", "tiktok-secret-value2"))
 check("everyone can connect now", b.get("/api/status").json()["connect"], {"youtube": True, "instagram": True, "tiktok": True})
+r = a.put("/api/apps", json={"platform": "tiktok", "client_id": "awtiktokkey123", "client_secret": "", "open": False}, headers=ORIGIN)
+check("an admin can keep a platform to testers only", (r.status_code, r.json()["tiktok"]["open"]), (200, False))
+check("...then ordinary users are not offered it", b.get("/api/status").json()["connect"]["tiktok"], False)
+check("...but the admin still is, to test", a.get("/api/status").json()["connect"]["tiktok"], True)
+check("...and Home's Connect pill follows what is open to everyone", a.get("/api/status").json()["open"]["tiktok"], False)
+r = b.get("/oauth/tiktok/start")
+check("...a user pressing Connect anyway is told why", (r.status_code, "connect_error" in r.headers["location"]), (303, True))
+a.put("/api/apps", json={"platform": "tiktok", "client_id": "awtiktokkey123", "client_secret": "", "open": True}, headers=ORIGIN)
+check("opened again: everyone can connect", b.get("/api/status").json()["connect"]["tiktok"], True)
+
+# ---- YouTube cookies, for servers YouTube refuses
+from studio import media
+COOK = ".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tsecret-cookie-value\n"
+check("a normal user cannot save YouTube cookies", b.put("/api/youtube-cookies", json={"text": COOK}, headers=ORIGIN).status_code, 404)
+check("something that is not a cookies file is refused", a.put("/api/youtube-cookies", json={"text": "hello"}, headers=ORIGIN).status_code, 400)
+r = a.put("/api/youtube-cookies", json={"text": COOK}, headers=ORIGIN)
+check("cookies saved", (r.status_code, r.json()["saved"]), (200, True))
+check("the cookies are never sent back", "secret-cookie-value" in a.get("/api/youtube-cookies").text, False)
+check("downloads use them", media.cookie_opts(), {"cookiefile": str(config.YT_COOKIES)})
+a.put("/api/youtube-cookies", json={"remove": True}, headers=ORIGIN)
+check("...until they are removed", (config.YT_COOKIES.exists(), media.cookie_opts()), (False, {}))
 
 # ---- the platforms, as stand-ins
 class R:
@@ -86,9 +107,9 @@ def post(url, data=None, json=None, headers=None, params=None, timeout=None, con
         if tt["status"] < 2:
             return R(200, {"data": {"status": "PROCESSING_UPLOAD"}, "error": {"code": "ok"}})
         return R(200, {"data": {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": [7300] if tt["audited"] else []}, "error": {"code": "ok"}})
-    if url.endswith("/17841/media"):
+    if url.endswith("/17841/media") or url.endswith("/9001/media"):
         return R(200, {"id": "container1"})
-    if url.endswith("/17841/media_publish"):
+    if url.endswith("/17841/media_publish") or url.endswith("/9001/media_publish"):
         return R(200, {"id": "media1"})
     return R(404, {})
 def get(url, params=None, headers=None, timeout=None):
@@ -99,6 +120,15 @@ def get(url, params=None, headers=None, timeout=None):
         return R(200, {"access_token": "ig-long", "token_type": "bearer", "expires_in": 5183944})
     if url == "https://graph.instagram.com/me":
         return R(200, {"user_id": "17841", "username": "clipper", "account_type": "MEDIA_CREATOR"})
+    if url == "https://graph.facebook.com/v21.0/oauth/access_token":
+        if params.get("grant_type") == "fb_exchange_token":
+            return R(200, {"access_token": "fb-long-token", "expires_in": 5184000})
+        return R(200, {"access_token": "fb-short-token"}) if params.get("code") == "fbcode" else R(400, {"error": {"message": "bad code"}})
+    if url == "https://graph.facebook.com/v21.0/debug_token":
+        return R(200, {"data": {"granular_scopes": [{"scope": "instagram_basic", "target_ids": ["9001"]},
+                                                    {"scope": "instagram_content_publish", "target_ids": ["9001"]}]}})
+    if url == "https://graph.facebook.com/v21.0/9001":
+        return R(200, {"id": "9001", "username": "fbclipper", "account_type": "BUSINESS"})
     if url.endswith("/container1"):
         return R(200, {"status_code": "FINISHED"})
     if url.endswith("/media1"):
@@ -186,6 +216,92 @@ with ctx.as_user(user.id):
     acc = accounts.get(ttacc["id"]); acc["expires"] = 0; accounts._put(acc)
     accounts._tt_token(accounts.get(ttacc["id"]))
     check("TikTok: an old sign-in is renewed, and the new refresh token kept", accounts.get(ttacc["id"])["refresh_token"], "tt-refresh-2")
+
+# ---- Instagram through Facebook login (newer Meta apps): a login configuration id switches it on
+r = a.put("/api/apps", json={"platform": "instagram", "client_id": "", "client_secret": "", "config_id": "12ab"}, headers=ORIGIN)
+check("a configuration id that is not digits is refused", r.status_code, 400)
+r = a.put("/api/apps", json={"platform": "instagram", "client_id": "", "client_secret": "newer-app-secret", "config_id": "1122334455667788"}, headers=ORIGIN)
+check("the configuration id is saved with the app", (r.status_code, r.json()["instagram"]["facebook"]), (200, True))
+check("...and never sent back whole", "1122334455667788" in json.dumps(r.json()), False)
+loc, back = connect(b, "instagram", "fbcode")
+q = parse_qs(loc.query)
+check("Instagram (Facebook login): Facebook's page, asking by configuration, as a code",
+      (loc.netloc, q["config_id"][0], q["override_default_response_type"][0], q["response_type"][0]), ("www.facebook.com", "1122334455667788", "true", "code"))
+check("Instagram (Facebook login): connected", "connected=instagram" in back.headers["location"])
+check("...and the person is asked to sign in, so they can choose Instagram", q.get("prompt"), ["login"])
+fbacc = next(x for x in b.get("/api/accounts").json() if x["name"] == "@fbclipper")
+check("the shared Instagram account is listed with its type", fbacc["detail"], "Business account")
+check("its token never reaches the page", any(t in b.get("/api/accounts").text for t in ("fb-short-token", "fb-long-token")), False)
+with ctx.as_user(user.id):
+    ig2 = accounts.get(fbacc["id"])
+    check("the short-lived token is swapped for a long-lived one", ig2["token"], "fb-long-token")
+    calls.clear()
+    rid, url = accounts.instagram_upload(ig2, jd / "clip01.mp4", "From Facebook login", "job-12345678")
+    made = next(c for c in calls if c[1].endswith("/9001/media"))
+    check("posting goes through Facebook's address, as a Reel from the signed link",
+          (made[1].startswith("https://graph.facebook.com/v21.0/"), made[2]["media_type"], made[2]["video_url"].startswith(BASE + "/pub/")), (True, "REELS", True))
+    check("...and publishes", (rid, url), ("media1", "https://www.instagram.com/reel/abc/"))
+    ig2["token_time"] = 0; accounts._put(ig2)
+    check("an old token is renewed (the swap again) and the time reset", (accounts._ig_token(accounts.get(fbacc["id"])), time.time() - accounts.get(fbacc["id"])["token_time"] < 5),
+          ("fb-long-token", True))
+r = b.get("/oauth/instagram/callback", params={"code": "wrong", "state": parse_qs(urlparse(b.get("/oauth/instagram/start").headers["location"]).query)["state"][0]})
+check("a wrong code says it was not connected", "connect_error" in r.headers["location"])
+
+# ---- finding the Instagram account after Facebook login: through a Page shared by a business, and clear reasons when none
+def fb_variant(debug, pages, page_lookup):
+    def g(url, params=None, headers=None, timeout=None):
+        if url == "https://graph.facebook.com/v21.0/debug_token":
+            return R(200, {"data": debug})
+        if url == "https://graph.facebook.com/v21.0/me/accounts":
+            return R(200, {"data": pages})
+        if url.startswith("https://graph.facebook.com/v21.0/page") :
+            return R(200, page_lookup)
+        if url == "https://graph.instagram.com/me":       # a Facebook sign-in: Instagram's own API doesn't know it
+            return R(400, {"error": {"code": 190}})
+        if url == "https://graph.facebook.com/v21.0/9002":
+            return R(200, {"id": "9002", "username": "pageclipper", "account_type": "MEDIA_CREATOR"})
+        return get(url, params, headers, timeout)
+    return g
+both = ["instagram_basic", "instagram_content_publish", "pages_show_list", "pages_read_engagement"]
+accounts.httpx.get = fb_variant({"user_id": "fbp", "scopes": both, "granular_scopes": [{"scope": "pages_show_list", "target_ids": ["page77"]}]},
+                                [], {"id": "page77", "connected_instagram_account": {"id": "9002"}})
+loc, back = connect(b, "instagram", "fbcode")
+check("an Instagram account linked to a Page shared through a business is found", "connected=instagram" in back.headers["location"])
+accounts.httpx.get = fb_variant({"user_id": "fbp", "scopes": both, "granular_scopes": []}, [], {})
+loc, back = connect(b, "instagram", "fbcode")
+check("no Page shared: says to tick the Page", "Page" in back.headers["location"] and "connect_error" in back.headers["location"])
+_g = fb_variant({"user_id": "fbp", "scopes": ["instagram_basic", "instagram_content_publish"], "granular_scopes": []}, [], {})
+accounts.httpx.get = lambda url, params=None, headers=None, timeout=None: (
+    R(200, {"data": [{"id": "9002"}]}) if url.endswith("/me/instagram_accounts") else _g(url, params, headers, timeout))
+loc, back = connect(b, "instagram", "fbcode")
+check("a business sign-in with no Page: its Instagram account is still found", "connected=instagram" in back.headers["location"])
+accounts.httpx.get = fb_variant({"user_id": "fbp", "scopes": both, "granular_scopes": []}, [{"id": "page1"}], {})
+loc, back = connect(b, "instagram", "fbcode")
+check("a Page without Instagram: says to link Instagram to it", "linked" in back.headers["location"])
+accounts.httpx.get = fb_variant({"user_id": "fbp", "scopes": ["pages_show_list"], "granular_scopes": []}, [], {})
+loc, back = connect(b, "instagram", "fbcode")
+check("Instagram permission left unticked: says to leave every permission ticked", "ticked" in back.headers["location"])
+accounts.httpx.get = get
+
+# ---- what Meta requires of a live app: the deletion page, and the callbacks that remove a person's account
+import base64, hashlib, hmac as _hmac
+def signed(uid, secret):
+    payload = base64.urlsafe_b64encode(json.dumps({"user_id": uid, "algorithm": "HMAC-SHA256"}).encode()).rstrip(b"=").decode()
+    sig = base64.urlsafe_b64encode(_hmac.new(secret.encode(), payload.encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+    return f"{sig}.{payload}"
+pg = anon.get("/data-deletion")
+check("a data-deletion page, public, says how to remove data", (pg.status_code, "Disconnect" in pg.text), (200, True))
+secret_now = accounts.app_keys("instagram")[1]
+with ctx.as_user(user.id):
+    acc_fb = accounts.get(fbacc["id"])
+    check("the Instagram account remembers which Facebook person shared it", acc_fb.get("fb_user"), "")   # the stand-in debug_token names no user
+    acc_fb["fb_user"] = "fbperson42"; accounts._put(acc_fb)
+r = anon.post("/webhooks/meta/data-deletion", data={"signed_request": signed("fbperson42", "wrong-secret")})
+check("a request not signed by Meta is refused", r.status_code, 400)
+r = anon.post("/webhooks/meta/data-deletion", data={"signed_request": signed("fbperson42", secret_now)})
+check("Meta's deletion request: answered with a page and a confirmation code", (r.status_code, r.json()["url"].startswith(BASE + "/data-deletion?code="), len(r.json()["confirmation_code"])), (200, True, 16))
+check("...and that person's Instagram account is gone", any(x["id"] == fbacc["id"] for x in b.get("/api/accounts").json()), False)
+check("...while other accounts stay", any(x["platform"] == "tiktok" for x in b.get("/api/accounts").json()), True)
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil; db.engine.dispose(); shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)

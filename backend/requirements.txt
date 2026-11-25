@@ -8,5 +8,7 @@ sherpa-onnx==2.0.3
 soundfile==0.14.0
 SQLAlchemy==2.1.9
 uvicorn==0.54.0
-yt-dlp==2026.11.23
+# yt-dlp with its YouTube signature scripts (yt-dlp-ejs), which YouTube downloads now need
+yt-dlp[default]==2026.11.23
 pillow==13.0.0
+opencv-python-headless==5.1.0.95   # finding a streamer's facecam (YuNet); the app works without it

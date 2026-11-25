@@ -35,15 +35,50 @@ def delete_clip(jid: str, cid: str) -> bool:
     for name in (clip.get("file"), clip.get("cover")):
         if name:
             (d / "clips" / Path(str(name)).name).unlink(missing_ok=True)
+    for stem in {cid, Path(str(clip.get("file") or cid)).stem}:     # the captions and the notes kept beside the clip
+        for ext in ("ass", "json"):
+            (d / "clips" / f"{stem}.{ext}").unlink(missing_ok=True)
     src = clip.get("src")
-    if src and Path(src).parent == d:              # the piece of video fetched just for this clip
-        Path(src).unlink(missing_ok=True)
+    if src:                                        # the piece of video fetched or recorded just for this clip
+        p = Path(src)
+        try:
+            mine = p.resolve().parent in ((d / "clips").resolve(), d.resolve()) and p.name.startswith(f"{cid}.src")
+        except OSError:
+            mine = False
+        if mine:                                   # never the whole video's own file
+            p.unlink(missing_ok=True)
+    for left in (d / "clips").glob(f"{cid}.src.*"):    # an older piece for this clip, from before it was fetched again
+        left.unlink(missing_ok=True)
     ctx.bump()
     return True
 
 
-def delete_many(job_ids: list, clip_ids: list) -> dict:
-    """Delete several videos and clips in one go. What is still being worked on is left alone and counted."""
+VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov", ".m4v", ".ts", ".flv", ".m4a", ".wav", ".part", ".ytdl")
+
+
+def drop_video(jid: str) -> bool:
+    """Delete a video but keep the clips made from it: the whole video (and a recording's stream pieces) go, the
+    clips, their covers and the stretches they were cut from stay, listed under the video's name as before."""
+    job = jobs.get(jid)
+    if not job:
+        return False
+    if not [c for c in job.get("clips", []) if c.get("status") != "dropped"]:
+        return jobs.delete(jid)              # nothing to keep
+    d = Path(job["dir"])
+    for f in d.iterdir() if d.is_dir() else []:
+        if f.is_file() and f.suffix.lower() in VIDEO_EXT:
+            f.unlink(missing_ok=True)
+    for sub in ("buffer", "pieces", "segments", "chunks"):
+        shutil.rmtree(d / sub, ignore_errors=True)
+    job.update(video_deleted=True, source_path="")
+    jobs.save(job)
+    ctx.bump()
+    return True
+
+
+def delete_many(job_ids: list, clip_ids: list, keep_clips: bool = False) -> dict:
+    """Delete several videos and clips in one go. What is still being worked on is left alone and counted.
+    With keep_clips, a video goes but the clips made from it stay."""
     out = {"videos": 0, "clips": 0, "skipped": 0}
     whole = set()
     for jid in dict.fromkeys(job_ids):
@@ -53,7 +88,7 @@ def delete_many(job_ids: list, clip_ids: list) -> dict:
         if _busy(job):
             out["skipped"] += 1
             continue
-        if jobs.delete(jid):
+        if drop_video(jid) if keep_clips else jobs.delete(jid):
             whole.add(jid)
             out["videos"] += 1
     for jid, cid in dict.fromkeys(clip_ids):
@@ -64,6 +99,13 @@ def delete_many(job_ids: list, clip_ids: list) -> dict:
         except Busy:
             out["skipped"] += 1
     return out
+
+
+def clip_title_name(clip: dict, fallback: str = "clip") -> str:
+    """The file name a downloaded clip should have, without the extension: its title, or its hook, made safe to save.
+    A clip with neither keeps `fallback` (its id), so a name is never empty."""
+    text = clip.get("title") or clip.get("hook") or fallback
+    return "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in text)[:60].strip() or fallback
 
 
 def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
@@ -81,7 +123,7 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
         total += f.stat().st_size
         if total > limit_gb * 1e9:
             raise ValueError(f"That is more than {limit_gb:g} GB of clips. Download them in smaller groups.")
-        base = "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
+        base = clip_title_name(clip, cid)
         name, n = f"{base}.mp4", 2
         while name.lower() in seen:
             name, n = f"{base} ({n}).mp4", n + 1
@@ -102,8 +144,27 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
 
 
 # ---------------------------------------------------------------- creators
-def delete_creator(cid: str) -> dict:
-    """Remove a creator, their settings and folder, and every video and clip filed under them."""
+def _unfile(job):
+    """Move a video out of a streamer's folder into the account's own videos, so it outlives the streamer."""
+    old = Path(job["dir"])
+    new = config.user_dir(ctx.uid()) / "jobs" / job["id"]
+    new.parent.mkdir(parents=True, exist_ok=True)
+    if old.is_dir() and not new.exists():
+        shutil.move(str(old), str(new))
+    o, n = str(old), str(new)
+    fix = lambda v: (n + v[len(o):]) if isinstance(v, str) and v.startswith(o) else v   # noqa: E731
+    job.update(dir=n, creator=None, source_path=fix(job.get("source_path")))
+    if isinstance(job.get("source"), dict) and job["source"].get("path"):
+        job["source"]["path"] = fix(job["source"]["path"])
+    for c in job.get("clips", []):
+        if c.get("src"):
+            c["src"] = fix(c["src"])
+    jobs.save(job)
+
+
+def delete_creator(cid: str, keep_videos: bool = False) -> dict:
+    """Remove a streamer, their settings and folder. Their videos and clips go too, unless keep_videos: then they
+    move to All videos, filed under no streamer."""
     c = creators.get(cid)
     if not c:
         return {"ok": False}
@@ -113,12 +174,15 @@ def delete_creator(cid: str) -> dict:
     if any(_busy(j) for j in mine):
         raise Busy("One of this creator's videos is still being made. Wait for it to finish first.")
     for j in mine:
-        jobs.delete(j["id"])
+        if keep_videos:
+            _unfile(jobs.get(j["id"]))
+        else:
+            jobs.delete(j["id"])
     with creators._lock:
         creators._mine().pop(cid, None)
     shutil.rmtree(creators.root(cid), ignore_errors=True)
     ctx.bump()
-    return {"ok": True, "videos": len(mine)}
+    return {"ok": True, "videos": len(mine), "kept": keep_videos}
 
 
 # ---------------------------------------------------------------- the whole account
@@ -151,6 +215,8 @@ def delete_account(uid: str) -> dict:
         accounts._settings_mem.pop(uid, None)
     except Exception:  # noqa: BLE001
         pass
+    from . import posting
+    posting.forget(uid)                            # scheduled posts must not outlive the account that owns them
     usage.forget(uid)
     shutil.rmtree(config.user_dir(uid), ignore_errors=True)
     return {"ok": True}

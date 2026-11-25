@@ -36,11 +36,20 @@ db.init()
 with db.engine.begin() as cn:
     for (uid,) in cn.execute(sa.select(db.users.c.id).where(db.users.c.email.like("pieces-%"))).all():
         cn.execute(db.email_ok.insert().values(user_id=uid, verified_at=time.time()))
+for cl, em in ((a, "pieces-a@example.com"), (b, "pieces-b@example.com")):     # confirmed: now they can sign in
+    cl.post("/api/auth/login", json={"email": em, "password": "test-pass-123"})
 st = a.get("/api/status").json()
 part_mb = st["upload_part_mb"]
 data = os.urandom(int(part_mb * 1024 * 1024 * 2.4))            # two full pieces and a shorter last one
 H = {"Content-Type": "application/octet-stream"}
 
+long = "YTDown.com_YouTube_Media_JaZAapq9WH0_13-Nov-2026-Question-Answer-Session-With-Public-" + "x" * 80 + "_720p.mp4"
+r = a.post("/api/upload/start", json={"name": long, "size": 1000, "options": {}, "creator": ""})
+check("a downloader's long file name is still taken as mp4", r.status_code == 200, r.text[:120])
+if r.status_code == 200:
+    a.delete(f"/api/upload/{r.json()['id']}")
+check("a file that is not a video is still refused",
+      a.post("/api/upload/start", json={"name": "setup.exe", "size": 1000, "options": {}, "creator": ""}).status_code == 400)
 s = a.post("/api/upload/start", json={"name": "big video.mp4", "size": len(data), "options": {"max_clips": 2}, "creator": ""}).json()
 check("a big file is split into pieces", s.get("parts") == 3, str(s))
 part = s["part"]
@@ -74,6 +83,26 @@ big = a.put(f"/api/upload/{'0' * 24}/0", content=b"x" * ((part_mb + 9) * 1024 * 
 check("an oversized request to the pieces address is cut off", big.status_code == 413, str(big.status_code))
 c = a.post("/api/upload/start", json={"name": "y.mp4", "size": 1000}).json()
 check("an upload can be cancelled", a.delete(f"/api/upload/{c['id']}").status_code == 200 and a.put(f"/api/upload/{c['id']}/0", content=b"x" * 1000, headers=H).status_code == 404)
+
+# ---- an upload cut short by closing the tab never says it stopped; it must not block new uploads for hours
+if data_dir:
+    up_root = Path(data_dir) / "tmp" / "uploads"
+    mine_a = a.post("/api/upload/start", json={"name": "a-left.mp4", "size": 1000}).json()["id"]
+    started = [b.post("/api/upload/start", json={"name": f"b{i}.mp4", "size": 1000}) for i in range(st["max_batch"])]
+    check("several uploads can run at once", all(r.status_code == 200 for r in started), str([r.status_code for r in started]))
+    full = b.post("/api/upload/start", json={"name": "one-more.mp4", "size": 1000})
+    check("past the limit a new upload is refused", full.status_code == 429, str(full.status_code))
+    left = time.time() - 20 * 60                                   # as if the tabs were closed 20 minutes ago
+    for d in up_root.glob("up-*"):
+        for f in [d, *d.iterdir()]:
+            os.utime(f, (left, left))
+    again = b.post("/api/upload/start", json={"name": "after.mp4", "size": 1000})
+    check("uploads left behind for a while stop counting", again.status_code == 200, again.text[:120])
+    check("they are cleared away", sum(1 for r in started if (up_root / f"up-{r.json()['id']}").exists()) == 0)
+    check("someone else's upload is not cleared by me", (up_root / f"up-{mine_a}").exists())
+    busy = b.post("/api/upload/start", json={"name": "busy.mp4", "size": 1000}).json()["id"]
+    a.post("/api/upload/start", json={"name": "a-new.mp4", "size": 1000})
+    check("an upload that is still moving is kept", (up_root / f"up-{busy}").exists())
 
 print("\n%d failed" % len(fails) if fails else "\nALL PASSED")
 sys.exit(1 if fails else 0)

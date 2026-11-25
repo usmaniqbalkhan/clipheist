@@ -23,29 +23,45 @@ creator's live stream and clip the highlights while the stream is still running.
 
 ## Quick start
 
-You need Python 3.10 or newer and `ffmpeg` on your PATH.
+You need Python 3.10 or newer and `ffmpeg`. On Windows: `winget install Gyan.FFmpeg`. On a Mac: `brew install ffmpeg`.
+On Linux: `sudo apt install ffmpeg`. PeakCut finds it by itself and tells you in the dashboard if it is missing.
+
+Put PeakCut in a short folder that stays put: `C:\peakcut` on Windows, `~/peakcut` on a Mac or Linux. Not inside a
+temporary folder or an AI assistant's workspace: those get cleaned up, and on Windows a folder that deep stops the
+speech model from loading (Windows can't open files whose full path is over 260 characters). If an AI assistant
+installs it for you, it should ask you where to put it first ([AGENTS.md](AGENTS.md) tells it to).
+
+On Windows:
 
 ```bash
-git clone <this repository> peakcut
+git clone <this repository> C:\peakcut
 ```
 
 ```bash
-cd peakcut
+cd C:\peakcut
+```
+
+On a Mac or Linux:
+
+```bash
+git clone <this repository> ~/peakcut
+```
+
+```bash
+cd ~/peakcut
 ```
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Download the speech model once (about 480 MB) and start the server:
-
-```bash
-python -m studio.fetch_model
-```
+Start the server:
 
 ```bash
 python -m studio.server
 ```
+
+The first start downloads the speech model by itself (about 480 MB, once).
 
 Open http://127.0.0.1:8765. There is no sign-in: it opens straight into the dashboard. Go to **Settings, AI**, choose
 your AI service, paste your key and press **Save and test** (see [Choose your AI](#choose-your-ai)).
@@ -81,6 +97,14 @@ PEAKCUT_AI_KEY=your-key-here
 - You pay the AI service directly for what you use. The **AI usage** page in the app shows how many requests and
   tokens each video took.
 - Speech to text does not use the AI service. It runs on your own machine, so audio never leaves it.
+
+### Videos in Arabic
+
+PeakCut hears English by default. To clip videos in Arabic, add the Arabic speech model once in
+**Settings → Speech models** (about 107 MB), or choose **Arabic** under Options when adding a video and PeakCut
+offers to download it. Set a creator's language on their Setup page so their live recordings use it too.
+It understands Modern Standard Arabic and everyday dialects, and the AI turns English words said in between
+back into English. Captions on the clips are in English.
 
 ## Settings
 
@@ -119,14 +143,25 @@ python -m studio.admin grant you@example.com
 | `tests/` | Tests that run against a throwaway copy of the app |
 | `deploy/`, `Dockerfile`, `docker-compose.yml` | One-server deployment with PostgreSQL and automatic HTTPS |
 
-Video work is done with `ffmpeg` and `yt-dlp`. Speech is transcribed with `sherpa-onnx` and the Parakeet model.
+Video work is done with `ffmpeg` and `yt-dlp`. Speech is transcribed with `sherpa-onnx` and NVIDIA's Parakeet
+model (English) and FastConformer Arabic model, both released by NVIDIA under the Creative Commons Attribution 4.0
+licence (CC-BY-4.0). The Arabic model was converted for sherpa-onnx with `tools/export_arabic_model.py`.
 Data is kept per user: accounts in the database (SQLite on your own computer, PostgreSQL on a server), videos and
 clips in each user's own folder. [AGENTS.md](AGENTS.md) is a short map of the code for contributors and AI coding
 assistants.
 
+## Where your videos and clips are kept
+
+Everything PeakCut keeps is in one folder: videos, clips, recordings, creators, settings and the speech model. By
+default it is the `data` folder inside PeakCut. **Settings, Storage** shows the folder and how much room its drive
+has, opens it in one click, and lets you move it to another drive: choose the new folder, and PeakCut moves
+everything there the next time it starts. If the drive is nearly full, PeakCut says so and stops taking new videos
+until there is room. (`PEAKCUT_DATA` in `.env` still works and takes priority.)
+
 ## Updating
 
-PeakCut checks GitHub every few hours. When a newer version is out, the dashboard shows a notice with what changed
+PeakCut checks GitHub once a minute while it runs. When a newer version is out, the dashboard shows a notice
+within a minute or two (no restart needed), with what changed
 and how to update: ask your AI coding assistant to do it (the notice has a sentence to paste), or run
 `git pull && pip install -r requirements.txt` in the PeakCut folder and restart it (with Docker:
 `git pull && docker compose up -d --build`). Your `.env`, keys and clips are not touched. Only the two commit ids

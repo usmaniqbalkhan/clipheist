@@ -7,7 +7,8 @@ for k in ("PEAKCUT_MAX_LIVE_PER_USER", "PEAKCUT_MAX_JOBS_PER_USER", "PEAKCUT_MAX
     os.environ.pop(k, None)
 os.environ.update(DATABASE_URL="", PEAKCUT_MAX_LIVE="20")
 sys.path.insert(0, ".")
-from studio import auth, config, creators, ctx, db, live, load
+from studio import auth, config, creators, ctx, db, live, load, transcribe
+transcribe.model_ready = lambda *a, **k: True     # this is about limits: the speech model counts as being there
 db.init()
 fails = []
 def check(n, got, want=True):

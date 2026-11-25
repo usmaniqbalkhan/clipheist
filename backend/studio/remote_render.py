@@ -22,8 +22,15 @@ def enabled() -> bool:
     return bool(URL and TOKEN)
 
 
-def cut(job: dict, clip: dict, words: list, audio, hook: str) -> dict:
-    """Make the clip on Modal. Writes <id>.mp4/.jpg/.ass/.src.mp4 into the job's clips folder and returns
+# What a clip carries to the clip maker: its cut, its text and its look. Things that live in files on this machine
+# (a campaign's logo, the streamer's cam found in the whole video) are not sent: those clips are made here.
+CLIP_FIELDS = ("hook", "style", "layout", "look", "template", "captions", "highlight_words", "watermark", "script",
+               "cap_lang", "title", "description")
+
+
+def cut(job: dict, clip: dict, words: list, audio, local: dict, extras: dict = None) -> dict:
+    """Make the clip on Modal. `local` is the clip as it is about to be drawn (render_one), `words` the words shown on
+    it with times in the video. Writes <id>.mp4/.jpg/.ass/.src.mp4 into the job's clips folder and returns
     {offset, src_end, start, end, width, height, layout, src}."""
     d = Path(job["dir"]) / "clips"
     d.mkdir(parents=True, exist_ok=True)
@@ -34,11 +41,11 @@ def cut(job: dict, clip: dict, words: list, audio, hook: str) -> dict:
     if audio is not None and len(audio):
         hay = np.asarray(audio[int(hay_at * 16000): int((want + 50) * 16000)], dtype=np.int16).tobytes()
     o = job["options"]
+    sent = {k: local[k] for k in CLIP_FIELDS if local.get(k) is not None}
+    sent.update(start=clip["start"], end=clip["end"])
     body = {"url": job["source"]["url"], "want": want, "until": until, "quality": int(o.get("quality") or 720),
             "name": clip["id"], "hay": base64.b64encode(hay).decode(), "hay_at": hay_at,
-            "clip": {"start": clip["start"], "end": clip["end"], "hook": hook, "style": clip.get("style", "bounce"),
-                     "highlight_words": clip.get("highlight_words", []), "layout": clip.get("layout", "blur"),
-                     "watermark": bool(job.get("watermark"))},
+            "clip": sent, "extras": {"note": (extras or {}).get("note", "")},
             "words": words}
     r = httpx.post(URL + "/cut", json=body, headers={"Authorization": f"Bearer {TOKEN}"},
                    timeout=httpx.Timeout(600, connect=20), follow_redirects=True)
